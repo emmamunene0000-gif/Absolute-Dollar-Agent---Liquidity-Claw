@@ -322,6 +322,8 @@ dashTextColor  = input.color(color.black,             "📝 Text Color",      gr
 panelPlacement = input.string("Top-Right", "📍 Placement",
      options=["Top-Right","Top-Left","Bottom-Right","Bottom-Left","Bottom-Center"], group=grpDash)
 showPerfPanel  = input.bool(true,  "Show Performance Table",               group=grpDash)
+tz_offset_hours = input.int(3,    "🕐 UTC Offset (3=Nairobi/EAT)",         group=grpDash, minval=-12, maxval=14, tooltip="UTC+3=Nairobi/EAT  UTC+0=London  UTC+2=Cairo  UTC+5:30=India  UTC+8=SGT  UTC-5=EST")
+tz_label        = input.string("EAT", "Timezone Label",                    group=grpDash, tooltip="Short label shown on dashboard, e.g. EAT, WAT, SGT, EST")
 
 // ── OSCILLATORS ───────────────────────────────────────────────────────────────
 grpOsc        = "📉 Oscillators"
@@ -746,6 +748,7 @@ vp_updateIntra(array<float> o, array<float> h, array<float> l, array<float> c, a
             array.push(vp_ltfVolume, array.get(v, i))
 
 vp_utcHour      = hour(time(timeframe.period, '0000-2400', 'GMT'), 'GMT')
+vp_localHour    = (vp_utcHour + tz_offset_hours) % 24
 vp_newTokyo     = vp_utcHour != vp_utcHour[1] + 1 and vp_utcHour != vp_utcHour[1]
 vp_endTokyo     = vp_utcHour >= 9  and vp_utcHour[1] < 9
 vp_newLondon    = vp_utcHour >= 7  and vp_utcHour[1] < 7
@@ -996,24 +999,12 @@ _fib_basis_gate = ta.ema(ta.ema(src_fib, len_fib), len_fib)
 var int trend_fib = 0
 trend_fib := _fib_basis_gate > _fib_basis_gate[1] ? 1 : _fib_basis_gate < _fib_basis_gate[1] ? -1 : nz(trend_fib[1])
 
-// if/else expression used — Pine Script v6 does not support multi-line ?:
-regimeBullish = if requireVWAP and requireFibTrend
-    bullishRegime and vwapBullish and trend_fib == 1
-else if requireVWAP
-    bullishRegime and vwapBullish
-else if requireFibTrend
-    bullishRegime and trend_fib == 1
-else
-    bullishRegime
-
-regimeBearish = if requireVWAP and requireFibTrend
-    bearishRegime and vwapBearish and trend_fib == -1
-else if requireVWAP
-    bearishRegime and vwapBearish
-else if requireFibTrend
-    bearishRegime and trend_fib == -1
-else
-    bearishRegime
+// Sequential single-line ternaries — Pine v6 handles these cleanly.
+// Fib and VWAP are layered filters, NOT a combined hard gate, matching The Claw's architecture.
+regimeBullish = requireVWAP ? (bullishRegime and vwapBullish) : bullishRegime
+regimeBullish := requireFibTrend ? (regimeBullish and trend_fib == 1) : regimeBullish
+regimeBearish = requireVWAP ? (bearishRegime and vwapBearish) : bearishRegime
+regimeBearish := requireFibTrend ? (regimeBearish and trend_fib == -1) : regimeBearish
 
 buy_signal_filtered  = enableRegimeFilter ? (buy_signal  and regimeBullish) : buy_signal
 sell_signal_filtered = enableRegimeFilter ? (sell_signal and regimeBearish) : sell_signal
@@ -1990,8 +1981,9 @@ liq_bias = close > ph_top and not na(ph_top) ? "💧 BREAKING SWING HIGH" :
      close > ph_top * 0.995 and not na(ph_top) ? "🧲 NEAR SWING HIGH" :
      close < pl_btm * 1.005 and not na(pl_btm) ? "🧲 NEAR SWING LOW" : "⚪ Neutral"
 
-current_session = vp_utcHour >= 13 and vp_utcHour < 22 ? "🗽 NY SESSION" :
-     vp_utcHour >= 7 and vp_utcHour < 16 ? "👑 LONDON SESSION" : "🗼 TOKYO/ASIA"
+current_session = vp_utcHour >= 13 and vp_utcHour < 22 ? "🗽 NY SESSION (" + str.tostring(vp_localHour) + ":xx " + tz_label + ")" :
+     vp_utcHour >= 7 and vp_utcHour < 16 ? "👑 LONDON SESSION (" + str.tostring(vp_localHour) + ":xx " + tz_label + ")" :
+     "🗼 TOKYO/ASIA (" + str.tostring(vp_localHour) + ":xx " + tz_label + ")"
 
 string master_bias = if total_score >= 10 and atrHL == "High"
     "🔥 SOVEREIGN HIGH MOMENTUM BULLISH"
