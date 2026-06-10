@@ -989,14 +989,31 @@ bullishRegime = positive
 bearishRegime = negative
 vwapBullish   = lastSwing ==  1
 vwapBearish   = lastSwing == -1
-regimeBullish = requireVWAP and requireFibTrend ? (bullishRegime and vwapBullish and trend_fib == 1) :
-                requireVWAP     ? (bullishRegime and vwapBullish) :
-                requireFibTrend ? (bullishRegime and trend_fib == 1) :
-                bullishRegime
-regimeBearish = requireVWAP and requireFibTrend ? (bearishRegime and vwapBearish and trend_fib == -1) :
-                requireVWAP     ? (bearishRegime and vwapBearish) :
-                requireFibTrend ? (bearishRegime and trend_fib == -1) :
-                bearishRegime
+
+// ── Fib Trend pre-computation for regime gate (plots stay in Section 12) ─────
+// Must be here — trend_fib is needed by regimeBullish below; Section 12 is later.
+_fib_basis_gate = ta.ema(ta.ema(src_fib, len_fib), len_fib)
+var int trend_fib = 0
+trend_fib := _fib_basis_gate > _fib_basis_gate[1] ? 1 : _fib_basis_gate < _fib_basis_gate[1] ? -1 : nz(trend_fib[1])
+
+// if/else expression used — Pine Script v6 does not support multi-line ?:
+regimeBullish = if requireVWAP and requireFibTrend
+    bullishRegime and vwapBullish and trend_fib == 1
+else if requireVWAP
+    bullishRegime and vwapBullish
+else if requireFibTrend
+    bullishRegime and trend_fib == 1
+else
+    bullishRegime
+
+regimeBearish = if requireVWAP and requireFibTrend
+    bearishRegime and vwapBearish and trend_fib == -1
+else if requireVWAP
+    bearishRegime and vwapBearish
+else if requireFibTrend
+    bearishRegime and trend_fib == -1
+else
+    bearishRegime
 
 buy_signal_filtered  = enableRegimeFilter ? (buy_signal  and regimeBullish) : buy_signal
 sell_signal_filtered = enableRegimeFilter ? (sell_signal and regimeBearish) : sell_signal
@@ -1012,9 +1029,9 @@ else if sellEnabled and sell_signal_filtered
         posState := -1
 
 buy_signal_confirmed  = (buyEnabled  and buy_signal_filtered  and posState == 1  and posState[1] <= 0) or
-     (newSmartBull and claw_exec_bull and regimeBullish and posState >= 0)
+     (newSmartBull and claw_exec_bull and regimeBullish and posState <= 0)
 sell_signal_confirmed = (sellEnabled and sell_signal_filtered and posState == -1 and posState[1] >= 0) or
-     (newSmartBear and claw_exec_bear and regimeBearish and posState <= 0)
+     (newSmartBear and claw_exec_bear and regimeBearish and posState >= 0)
 
 buy_sig_vis   = buyEnabled  and buy_signal_filtered
 sell_sig_vis  = sellEnabled and sell_signal_filtered
@@ -1212,10 +1229,9 @@ if barstate.islast and showZones
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 12 — FIBONACCI EXTENSION BANDS
 // ══════════════════════════════════════════════════════════════════════════════
-basis   = ta.ema(ta.ema(src_fib, len_fib), len_fib)
+basis   = _fib_basis_gate  // reuse pre-computed EMA from regime gate above
 vol_fib = useATR_fib ? ta.atr(atrLen_fib) : ta.stdev(src_fib, len_fib)
-var int trend_fib = 0
-trend_fib := basis > basis[1] ? 1 : basis < basis[1] ? -1 : nz(trend_fib[1])
+// trend_fib already declared and computed before Section 7
 
 u1_v = trend_fib == -1 ? basis + vol_fib * 0.618 : na
 u4_v = trend_fib == -1 ? basis + vol_fib * 2.618 : na
