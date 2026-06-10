@@ -895,6 +895,41 @@ ncondition2 = negative  and not negative[1]
 plotshape(showRSIlabels and pcondition,  title="RSI+", style=shape.labelup,   color=color.new(color.green, 62), location=location.belowbar, size=size.tiny, text="BULL", textcolor=color.white)
 plotshape(showRSIlabels and ncondition2, title="RSI-", style=shape.labeldown, color=color.new(color.red,   66), location=location.abovebar, size=size.tiny, text="BEAR", textcolor=color.white)
 
+// ── SMART RSI EXTREME SIGNALS ────────────────────────────────────────────────
+float rsi_m5_val  = request.security(syminfo.tickerid,"5", ta.rsi(close,rsiLen), barmerge.gaps_off, barmerge.lookahead_off)
+float ema5_m5     = request.security(syminfo.tickerid,"5", ta.ema(close,5),      barmerge.gaps_off, barmerge.lookahead_off)
+bool  m5_bull_mom = ta.change(ema5_m5) > 0
+bool  m5_bear_mom = ta.change(ema5_m5) < 0
+
+bool smartBull   = enable_smart_signals and rsi >= rsi_extreme_bull and change_ema5 > 0 and (not use_m5_rsi_confirm or (rsi_m5_val > pmom and m5_bull_mom))
+bool smartBear   = enable_smart_signals and rsi <= rsi_extreme_bear and change_ema5 < 0 and (not use_m5_rsi_confirm or (rsi_m5_val < nmom and m5_bear_mom))
+bool newSmartBull = smartBull and not smartBull[1] and barstate.isconfirmed
+bool newSmartBear = smartBear and not smartBear[1] and barstate.isconfirmed
+
+plotshape(enable_smart_signals and newSmartBull, title="Smart Bull", style=shape.labelup,   location=location.belowbar, color=color.new(#00c853,20), textcolor=color.white, size=size.small, text="🧠B")
+plotshape(enable_smart_signals and newSmartBear, title="Smart Bear", style=shape.labeldown, location=location.abovebar, color=color.new(#d50000,20), textcolor=color.white, size=size.small, text="🧠S")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 6.5 — CLAW MULTI-TIMEFRAME LIQUIDITY TRAIL
+// Direction truth from ratcheting ATR trail. Each TF runs in its own context.
+// M5=execution precision | M15=tactical | H1=intraday regime
+// ══════════════════════════════════════════════════════════════════════════════
+[claw_exec_trend, claw_exec_trail] = calcLiqTrail(claw_ma_len, claw_atr_len, claw_atr_mult)
+[claw_m5_trend,   claw_m5_trail]   = request.security(syminfo.tickerid,"5",  calcLiqTrail(claw_ma_len,claw_atr_len,claw_atr_mult), barmerge.gaps_off, barmerge.lookahead_off)
+[claw_m15_trend,  claw_m15_trail]  = request.security(syminfo.tickerid,"15", calcLiqTrail(claw_ma_len,claw_atr_len,claw_atr_mult), barmerge.gaps_off, barmerge.lookahead_off)
+[claw_h1_trend,   claw_h1_trail]   = request.security(syminfo.tickerid,"60", calcLiqTrail(claw_ma_len,claw_atr_len,claw_atr_mult), barmerge.gaps_off, barmerge.lookahead_off)
+
+bool claw_mtf_bull     = claw_m15_trend == 1  and claw_h1_trend == 1
+bool claw_mtf_bear     = claw_m15_trend == -1 and claw_h1_trend == -1
+bool claw_partial_bull = claw_m15_trend == 1  or claw_h1_trend == 1
+bool claw_partial_bear = claw_m15_trend == -1 or claw_h1_trend == -1
+bool claw_exec_bull    = claw_exec_trend == 1
+bool claw_exec_bear    = claw_exec_trend == -1
+
+string claw_dir_str = claw_mtf_bull ? "🟢 MTF BULL" : claw_mtf_bear ? "🔴 MTF BEAR" : claw_partial_bull ? "🟡 PARTIAL BULL" : claw_partial_bear ? "🟠 PARTIAL BEAR" : "⚪ MIXED"
+
+plot(showClawTrail ? claw_exec_trail : float(na), "Claw Exec Trail", color=claw_exec_bull ? color.new(color.lime,20) : color.new(color.red,20), linewidth=2)
+
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 7 — ATM BOT (ATR TRAILING STOP ENGINE)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -954,8 +989,14 @@ bullishRegime = positive
 bearishRegime = negative
 vwapBullish   = lastSwing ==  1
 vwapBearish   = lastSwing == -1
-regimeBullish = requireVWAP ? (bullishRegime and vwapBullish) : bullishRegime
-regimeBearish = requireVWAP ? (bearishRegime and vwapBearish) : bearishRegime
+regimeBullish = requireVWAP and requireFibTrend ? (bullishRegime and vwapBullish and trend_fib == 1) :
+                requireVWAP     ? (bullishRegime and vwapBullish) :
+                requireFibTrend ? (bullishRegime and trend_fib == 1) :
+                bullishRegime
+regimeBearish = requireVWAP and requireFibTrend ? (bearishRegime and vwapBearish and trend_fib == -1) :
+                requireVWAP     ? (bearishRegime and vwapBearish) :
+                requireFibTrend ? (bearishRegime and trend_fib == -1) :
+                bearishRegime
 
 buy_signal_filtered  = enableRegimeFilter ? (buy_signal  and regimeBullish) : buy_signal
 sell_signal_filtered = enableRegimeFilter ? (sell_signal and regimeBearish) : sell_signal
@@ -970,8 +1011,10 @@ else if sellEnabled and sell_signal_filtered
     if not (prevent_reversals and is_trade_running and posState == 1)
         posState := -1
 
-buy_signal_confirmed  = buyEnabled  and buy_signal_filtered  and posState == 1  and posState[1] <= 0
-sell_signal_confirmed = sellEnabled and sell_signal_filtered and posState == -1 and posState[1] >= 0
+buy_signal_confirmed  = (buyEnabled  and buy_signal_filtered  and posState == 1  and posState[1] <= 0) or
+     (newSmartBull and claw_exec_bull and regimeBullish and posState >= 0)
+sell_signal_confirmed = (sellEnabled and sell_signal_filtered and posState == -1 and posState[1] >= 0) or
+     (newSmartBear and claw_exec_bear and regimeBearish and posState <= 0)
 
 buy_sig_vis   = buyEnabled  and buy_signal_filtered
 sell_sig_vis  = sellEnabled and sell_signal_filtered
@@ -1338,6 +1381,12 @@ var float  max_profit_pips    = 0.0
 var string trade_phase        = "WAITING"
 
 if buy_signal_confirmed or sell_signal_confirmed
+    // ── FIX: close orphaned open trade in dpt when a new signal fires ──
+    if is_trade_running and dpt_active_idx >= 0 and dpt_active_idx < array.size(dpt_dir)
+        bool _was_t1 = array.get(dpt_tp1_hit, dpt_active_idx)
+        if not _was_t1
+            array.set(dpt_sl_hit, dpt_active_idx, true)  // Mark reversal-close as SL (conservative)
+        dpt_active_idx   := -1
     tp1_hit            := false
     tp2_hit            := false
     tp3_hit            := false
@@ -1346,6 +1395,7 @@ if buy_signal_confirmed or sell_signal_confirmed
     max_profit_pips    := 0.0
     trade_phase        := "ENTRY"
     is_trade_running   := true
+    holder_trail_price := na
 
 if trade_active and not na(locked_tp1)
     raw_max_diff = trade_direction == 1 ? high - locked_entry : locked_entry - low
@@ -1983,6 +2033,73 @@ tree_narrative =
      "      Regime :" + m5_r  + " V.WAP :" + m5_v  + " Fib Trend :" + m5_f  + " RSI:" + m5_ri  + "\n"
 
 // ══════════════════════════════════════════════════════════════════════════════
+// SECTION 20.5 — CLAW CONFIDENCE ENGINE
+// Weighted confluence score independent of the 4-layer fractal.
+// NOT a hard gate — measures conviction so agent can display confidence %.
+// ══════════════════════════════════════════════════════════════════════════════
+bool _vp_bull_ctx = vpEnabled and not na(vp_currentVAL) and close > vp_currentVAL
+bool _vp_bear_ctx = vpEnabled and not na(vp_currentVAH) and close < vp_currentVAH
+
+float claw_bull_score = 0.0
+float claw_bear_score = 0.0
+float claw_bull_max   = 0.0
+float claw_bear_max   = 0.0
+
+// MTF Trail (full + partial credit)
+claw_bull_score += claw_mtf_bull ? claw_mtf_wt : claw_partial_bull ? claw_mtf_wt * 0.4 : 0.0
+claw_bear_score += claw_mtf_bear ? claw_mtf_wt : claw_partial_bear ? claw_mtf_wt * 0.4 : 0.0
+claw_bull_max   += claw_mtf_wt
+claw_bear_max   += claw_mtf_wt
+
+// RSI momentum
+claw_bull_score += positive  ? claw_rsi_wt : 0.0
+claw_bear_score += negative  ? claw_rsi_wt : 0.0
+claw_bull_max   += claw_rsi_wt
+claw_bear_max   += claw_rsi_wt
+
+// VWAP direction
+claw_bull_score += vwapBullish ? claw_vwap_wt : 0.0
+claw_bear_score += vwapBearish ? claw_vwap_wt : 0.0
+claw_bull_max   += claw_vwap_wt
+claw_bear_max   += claw_vwap_wt
+
+// Fib trend
+claw_bull_score += trend_fib == 1  ? claw_fib_wt : 0.0
+claw_bear_score += trend_fib == -1 ? claw_fib_wt : 0.0
+claw_bull_max   += claw_fib_wt
+claw_bear_max   += claw_fib_wt
+
+// Volume Profile context
+claw_bull_score += _vp_bull_ctx ? claw_vp_wt : 0.0
+claw_bear_score += _vp_bear_ctx ? claw_vp_wt : 0.0
+claw_bull_max   += claw_vp_wt
+claw_bear_max   += claw_vp_wt
+
+// SMC Structure bias (uses swingTrend which is updated in Section 29 — reflects prev confirmed state)
+claw_bull_score += swingTrend.bias == BULLISH ? claw_struct_wt : 0.0
+claw_bear_score += swingTrend.bias == BEARISH ? claw_struct_wt : 0.0
+claw_bull_max   += claw_struct_wt
+claw_bear_max   += claw_struct_wt
+
+float claw_bull_conf = claw_bull_max > 0 ? math.round((claw_bull_score / claw_bull_max) * 100) : 0.0
+float claw_bear_conf = claw_bear_max > 0 ? math.round((claw_bear_score / claw_bear_max) * 100) : 0.0
+
+int claw_threshold = switch claw_mode
+    "Conservative" => 80
+    "Moderate"     => 60
+    "Aggressive"   => 40
+    "Custom"       => claw_custom_thr
+    => 60
+
+bool claw_bull_pass = claw_bull_conf >= claw_threshold
+bool claw_bear_pass = claw_bear_conf >= claw_threshold
+
+string claw_conf_str = buy_signal_confirmed  ? str.tostring(claw_bull_conf,"##") + "%" :
+                       sell_signal_confirmed ? str.tostring(claw_bear_conf,"##") + "%" :
+                       claw_exec_bull ? str.tostring(claw_bull_conf,"##") + "% bull" :
+                       claw_exec_bear ? str.tostring(claw_bear_conf,"##") + "% bear" : "—"
+
+// ══════════════════════════════════════════════════════════════════════════════
 // SECTION 21 — PIP TRACKER (DAILY RESET, ACTUAL vs EXPECTED)
 // ══════════════════════════════════════════════════════════════════════════════
 var int   pip_last_day         = 0
@@ -2231,10 +2348,13 @@ if dashOn and not na(dashTable) and barstate.islast
          " " + syminfo.ticker + " | " + timeframe.period + "  " + _p(close) + D +
          " " + current_session + "  |  ATR: " + atrHL + " (" + str.tostring(atrN,"#.##") + ")" + D +
          " 📅 Daily Context: " + pdh_pdl_status + D +
+         " 🦞 Claw Trail: " + claw_dir_str + D +
+         " 🎯 Confidence: " + claw_conf_str + " (need " + str.tostring(claw_threshold) + "%)" + D +
          " ATM " + (posState==1?"🟢":posState==-1?"🔴":"⚪") + "  Regime " + (regimeBullish?"📈":regimeBearish?"📉":"⚪") + D +
          " VWAP " + (lastSwing==1?"📈":lastSwing==-1?"📉":"⚪") + "  Fib " + (trend_fib==1?"📈":trend_fib==-1?"📉":"⚪") + D +
          " RSI " + (rsi>pmom?"📈":rsi<nmom?"📉":"⚪") + " (" + str.tostring(rsi,"##") + ")  MACD: " + macdB + D +
          L +
+         " 🦞 Claw " + (claw_exec_bull?"🟢":"🔴") + " M5:" + (claw_m5_trend==1?"▲":"▼") + " M15:" + (claw_m15_trend==1?"▲":"▼") + " H1:" + (claw_h1_trend==1?"▲":"▼") + D +
          " 📈 MTF EMA (9/21)" + D +
          " 1m"+(trend_1m=="G"?"📈":"📉")+" 5m"+(trend_5m=="G"?"📈":"📉")+" 15m"+(trend_15m=="G"?"📈":"📉")+" 30m"+(trend_30m=="G"?"📈":"📉")+" 1H"+(trend_1h=="G"?"📈":"📉") + D +
          " 4H"+(trend_4h=="G"?"📈":"📉")+" 1D"+(trend_1d=="G"?"📈":"📉")+" 1W"+(trend_1w=="G"?"📈":"📉")+" 1M"+(trend_1M=="G"?"📈":"📉") + D +
@@ -2350,7 +2470,7 @@ if showPerfPanel and not na(perfTable) and barstate.islast
 
     table.cell(perfTable,0,9,"ABSOLUTE DOLLAR INTELLIGENCE", text_color=PT_GOLD, text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_left)
     table.cell(perfTable,1,9,"",bgcolor=PT_HDR)
-    table.cell(perfTable,2,9,"SUPREME AGENT — ADSA v7.0", text_color=PT_MUTED,text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_center)
+    table.cell(perfTable,2,9,"SUPREME AGENT — ADSA v8.0", text_color=PT_MUTED,text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_center)
     table.cell(perfTable,3,9,"",bgcolor=PT_HDR)
     table.cell(perfTable,4,9,"© 2026", text_color=PT_MUTED,text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_right)
 
@@ -2554,7 +2674,7 @@ if useAgentAlerts and barstate.isconfirmed and (trigger_signal or silence_broadc
     string prem = ""
     prem += _SEP + "\n"
     prem += "🔥 ABSOLUTE DOLLAR — WAR ROOM\n"
-    prem += "Supreme Agent ADSA v7.0\n"
+    prem += "Supreme Agent ADSA v8.0\n"
     prem += _SEP + "\n"
     prem += "📊 Asset   : " + _sym + "\n"
     prem += "💰 Price   : " + _p(close) + "\n"
@@ -2586,7 +2706,7 @@ if useAgentAlerts and barstate.isconfirmed and (trigger_signal or silence_broadc
     string pub = ""
     pub += _SEP + "\n"
     pub += "🤖 ABSOLUTE DOLLAR — ATM AGENT\n"
-    pub += "Supreme Agent ADSA v7.0\n"
+    pub += "Supreme Agent ADSA v8.0\n"
     pub += _SEP + "\n"
     pub += "📊 Asset   : " + _sym + "\n"
     pub += "🌍 Session : " + current_session + "\n"
@@ -2735,7 +2855,7 @@ if _daily_trigger
          "\n[/ATM_DATA_ADSA]"
 
     string _prem =
-         _SEP + "\n📊 ABSOLUTE DOLLAR SUPREME AGENT — DAILY REPORT\nADSA v7.0\n" + _SEP + "\n" +
+         _SEP + "\n📊 ABSOLUTE DOLLAR SUPREME AGENT — DAILY REPORT\nADSA v8.0\n" + _SEP + "\n" +
          "📅 " + str.tostring(year)+"-"+_pad(month)+"-"+_pad(dayofmonth) + "\n" +
          "📊 " + syminfo.ticker + " | TF: " + timeframe.period + "\n" +
          "📅 Daily: " + pdh_pdl_status + "\n" +
@@ -2852,11 +2972,11 @@ bool short_exit_confirmed  = trade_active and trade_direction == -1 and (sl_aler
 
 if long_entry_confirmed
     strategy.close("Short", comment="Short REVERSAL") // Suppressed alert: EA handles via exent=1
-    strategy.entry("Long", strategy.long, comment="Long Entry", alert_message=f_format_alert(long_entry_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+    strategy.entry("Long", strategy.long, comment="Long Entry", alert_message=f_format_alert(long_entry_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, risk_per_trade))
 
 if short_entry_confirmed
     strategy.close("Long", comment="Long REVERSAL") // Suppressed alert: EA handles via exent=1
-    strategy.entry("Short", strategy.short, comment="Short Entry", alert_message=f_format_alert(short_entry_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+    strategy.entry("Short", strategy.short, comment="Short Entry", alert_message=f_format_alert(short_entry_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, risk_per_trade))
 
 if long_tp1_confirmed
     strategy.close("Long", qty_percent=33.3, comment="Long TP1", alert_message=f_format_alert(long_tp1_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
@@ -2869,6 +2989,27 @@ if long_tp3_confirmed
 
 if long_exit_confirmed
     strategy.close("Long", comment="Long Exit", alert_message=f_format_alert(long_exit_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+// ── TradeSgnl Automation: Auto-BE on TP1, Auto-Trail on TP2 ─────────────────
+if long_tp1_confirmed and ts_be_on_tp1 and not na(locked_entry)
+    float _be = locked_entry + ts_be_buffer_pts * syminfo.mintick * 10
+    alert(f_format_modify(ts_long_be_msg, syminfo.ticker, _be, 0.0, 0.0), alert.freq_once_per_bar_close)
+
+if short_tp1_confirmed and ts_be_on_tp1 and not na(locked_entry)
+    float _be = locked_entry - ts_be_buffer_pts * syminfo.mintick * 10
+    alert(f_format_modify(ts_short_be_msg, syminfo.ticker, _be, 0.0, 0.0), alert.freq_once_per_bar_close)
+
+if long_tp2_confirmed and ts_trail_on_tp2 and not na(locked_entry)
+    float _atr_now   = ta.atr(14)
+    float _t_start   = _atr_now * 1.5
+    float _t_step    = _atr_now * 0.5
+    alert(f_format_modify(ts_long_trail_msg, syminfo.ticker, 0.0, _t_start, _t_step), alert.freq_once_per_bar_close)
+
+if short_tp2_confirmed and ts_trail_on_tp2 and not na(locked_entry)
+    float _atr_now   = ta.atr(14)
+    float _t_start   = _atr_now * 1.5
+    float _t_step    = _atr_now * 0.5
+    alert(f_format_modify(ts_short_trail_msg, syminfo.ticker, 0.0, _t_start, _t_step), alert.freq_once_per_bar_close)
 
 if short_tp1_confirmed
     strategy.close("Short", qty_percent=33.3, comment="Short TP1", alert_message=f_format_alert(short_tp1_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
@@ -2883,31 +3024,57 @@ if short_exit_confirmed
     strategy.close("Short", comment="Short Exit", alert_message=f_format_alert(short_exit_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
 
 // ══════════════════════════════════════════════════════════════════════════════
-// END — ABSOLUTE DOLLAR AGENT | ADA v7.0
+// END — ABSOLUTE DOLLAR AGENT | ADA v8.0
 // © 2026 Absolute Dollar Intelligence | All Rights Reserved
 // Invite-Only | Not Financial Advice
 //
-// WHAT'S NEW IN v7.0 (vs SA-GAIP v6.1):
+// WHAT'S NEW IN v8.0 (vs v7.0 — Claw Protocol Edition):
 //
-//   ADDITION 1 — Live Dollar P&L Tracker
-//     Section 3 : _live_pnl() and _pnl_str() utility functions
-//     Section 23: live_pnl_val and live_pips_val computed per bar
-//                 "💵 Live P&L: +$XX.XX (+Y.Y pips)" line in Trade Setup panel
-//                 Fully asset-routed: forex lots, crypto coins, futures contracts
+//   ADDITION 1 — Claw Liquidity Trail Engine (Section 6.5)
+//     calcLiqTrail() function: ratcheting ATR trail around EMA
+//     MTF execution: M5 (precision), M15 (tactical), H1 (regime)
+//     claw_exec_trail plot (optional, showClawTrail toggle)
+//     claw_dir_str: "🟢 MTF BULL" / "🔴 MTF BEAR" / partial states
 //
-//   ADDITION 2 — PDH/PDL Context Engine
-//     Section 15.5: request.security("D") fetches prev-day high/low (lookahead=off)
-//                   pdh_pdl_status string: "🔼 Above PDH" / "🔽 Below PDL" / "↔ Inside Range"
-//     Section 23: "📅 Daily Context:" line in Core Signals panel
-//     Section 26: PDH/PDL line added to Telegram War Room + Public broadcast
-//     Section 28: PDH/PDL line added to Daily Report
+//   ADDITION 2 — Claw Confidence Engine (Section 20.5)
+//     Weighted 6-factor confluence score (MTF trail, RSI, VWAP, Fib, VP, SMC)
+//     Configurable mode: Conservative (80%) / Moderate (60%) / Aggressive (40%) / Custom
+//     NOT a hard gate — advisory only. Displayed in dashboard.
+//     claw_bull_conf / claw_bear_conf: 0–100% weighted score
 //
-//   ADDITION 3 — Tree-Format AI Narrative
-//     Section 20: tree_narrative string with ├── / │ / └── structure
-//                 5 layers: D/H4/H1/M15/M5 each showing R/V/F/RSI + score icon
-//                 🟢=score≥2.5 | 🔴=score≤-2.5 | 🟡=mild bull | 🟠=mild bear | ⚪=flat
-//     Section 23: Replaces flat "R= V= F=" rows in dashboard
-//     Section 26: Replaces flat table in _narrative Telegram block
+//   ADDITION 3 — Smart RSI Momentum Signals (Section 6)
+//     smartBull/smartBear fire when RSI hits extreme zones (75+/25-)
+//     M5 RSI + EMA5 momentum confirmation (optional)
+//     Plotted as 🧠B / 🧠S labels on chart
+//     Wired into buy_signal_confirmed / sell_signal_confirmed via OR gate
+//
+//   ADDITION 4 — Fib Trend Gate (Section 7)
+//     requireFibTrend input: adds Fib trend as optional regime gate
+//     Combined with requireVWAP via 4-path logic tree
+//     regimeBullish / regimeBearish updated accordingly
+//
+//   ADDITION 5 — TradeSgnl BE + Trail Automation (Section 30)
+//     Auto-BE alert when TP1 is hit (modifybuy/modifysell with be_price)
+//     Auto-Trail alert when TP2 is hit (trail=1 with trail_start/trail_step)
+//     f_format_modify() function for template substitution
+//     All messages fully user-configurable per input group
+//
+//   ADDITION 6 — Orphan Trade Fix (Section 16)
+//     When a new signal fires on an open dpt trade with no TP1 hit,
+//     the orphaned trade is marked as SL (conservative) in dpt arrays
+//     holder_trail_price reset to na on new signal
+//
+//   ADDITION 7 — vol_dollar Fix (Section 30)
+//     strategy.entry() alert_message now passes risk_per_trade (actual dollar risk)
+//     instead of locked_actual_risk (min-unit reference) for correct TradeSgnl sizing
+//
+//   ADDITION 8 — Dashboard Updates (Section 23)
+//     "🦞 Claw Trail: [MTF direction]" line in Core Signals panel
+//     "🎯 Confidence: XX% (need YY%)" line in Core Signals panel
+//     "🦞 Claw M5/M15/H1 arrow" line before MTF EMA block
+//
+// INHERITED FROM v7.0 (unchanged):
+//   Live Dollar P&L Tracker | PDH/PDL Context Engine | Tree-Format AI Narrative
 //
 // TELEGRAM SETUP (unchanged from v6.1):
 //   Settings > Telegram Broadcast > paste Chat IDs > toggle ON
