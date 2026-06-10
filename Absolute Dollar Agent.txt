@@ -1470,6 +1470,8 @@ bool rejection_alert    = (buy_rejected or sell_rejected) and barstate.isconfirm
 
 if sl_alert_event or holder_exit_event
     is_trade_running := false
+    trade_active     := false
+    trade_direction  := 0
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 17 — SMC VARIABLES & DECLARATIONS
