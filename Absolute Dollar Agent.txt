@@ -50,7 +50,7 @@
 //@version=6
 strategy("Absolute Dollar Agent v8", shorttitle="$ Agent", overlay=true,
      max_labels_count=500, max_lines_count=500, max_bars_back=5000, max_boxes_count=500,
-     max_polylines_count=100)
+     max_polylines_count=100, pyramiding=4)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — CONSTANTS & TYPES
@@ -216,6 +216,22 @@ enable_smart_signals  = input.bool(true,"🧠 Smart RSI Momentum Signals",group=
 rsi_extreme_bull      = input.int(75,"Smart Bull RSI ≥",group=grpConf,minval=55,maxval=90)
 rsi_extreme_bear      = input.int(25,"Smart Bear RSI ≤",group=grpConf,minval=10,maxval=45)
 use_m5_rsi_confirm    = input.bool(true,"M5 RSI Confirmation",group=grpConf)
+
+// ── PYRAMIDING / SCALE-IN ─────────────────────────────────────────────────────
+grpPyr             = "🔺 Pyramiding / Scale-In"
+enable_pyramiding  = input.bool(true,  "✅ Enable Scale-In (Pyramiding)", group=grpPyr,
+     tooltip="Adds to winning positions in the same direction. Fires on new Claw confirmation or RSI extreme zone re-entry while trade is running.")
+max_pyramids       = input.int(2,    "Max Pyramid Legs",            group=grpPyr, minval=1, maxval=4)
+pyramid_risk_pct   = input.float(50.0,"Pyramid Risk % of Base",     group=grpPyr, minval=10, maxval=100, step=5,
+     tooltip="Each pyramid leg risks this % of the base trade risk. Default 50% = half size of base entry.")
+pyramid_min_profit = input.float(10.0,"Min Profit to Scale (pips)", group=grpPyr, minval=0, step=1,
+     tooltip="Base trade must be at least this many pips in profit before a pyramid leg can fire.")
+pyramid_cooldown   = input.int(5,    "Cooldown (bars between legs)",group=grpPyr, minval=1, maxval=50,
+     tooltip="Minimum bars between pyramid entries. Prevents stacking on a single candle spike.")
+ts_long_pyr_msg    = input.string("LICENSE_ID,{{ticker}},buy,vol_dollar={{risk}},sl_price={{sl}},tp1_price={{tp1}},tp2_price={{tp2}},tp3_price={{tp3}},pct1=0.33,pct2=0.33,pct3=0.34,exent=1",
+     "Long Pyramid Alert", group=grpPyr)
+ts_short_pyr_msg   = input.string("LICENSE_ID,{{ticker}},sell,vol_dollar={{risk}},sl_price={{sl}},tp1_price={{tp1}},tp2_price={{tp2}},tp3_price={{tp3}},pct1=0.33,pct2=0.33,pct3=0.34,exent=1",
+     "Short Pyramid Alert", group=grpPyr)
 
 // ── TRADESGNL AUTOMATION ──────────────────────────────────────────────────────
 grpTS_auto     = "🤖 TradeSgnl Automation"
@@ -1376,12 +1392,22 @@ string pdh_pdl_status =
          "↔ Inside Range [PDH: " + _p(pdh_level) + " | PDL: " + _p(pdl_level) + "]" :
      "PDH/PDL: Calculating..."
 
-// ── forward-declarations needed by Section 16 (full blocks declared in later sections) ──
+// ── forward-declarations needed by Section 16 / 16.5 ─────────────────────────
 var array<int>  dpt_dir        = array.new<int>()
 var array<bool> dpt_tp1_hit    = array.new<bool>()
 var array<bool> dpt_sl_hit     = array.new<bool>()
 var int         dpt_active_idx = -1
 var float       holder_trail_price = na
+// Pyramid state — reset on exit in Section 16, incremented in Section 16.5
+var int   pyramid_count    = 0
+var int   pyr_last_bar     = 0
+var float pyr_locked_entry = na
+var float pyr_locked_sl    = na
+var float pyr_locked_tp1   = na
+var float pyr_locked_tp2   = na
+var float pyr_locked_tp3   = na
+var float pyr_locked_risk  = 0.0
+var int   pyr_locked_num   = 0
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 16 — TRADE PROGRESSION ENGINE (TP1/TP2/TP3/HOLDER MODE)
@@ -1410,6 +1436,7 @@ if buy_signal_confirmed or sell_signal_confirmed
     trade_phase        := "ENTRY"
     is_trade_running   := true
     holder_trail_price := na
+    pyramid_count      := 0  // reset scale-in count on every new base entry
 
 if trade_active and not na(locked_tp1)
     raw_max_diff = trade_direction == 1 ? high - locked_entry : locked_entry - low
@@ -1472,6 +1499,58 @@ if sl_alert_event or holder_exit_event
     is_trade_running := false
     trade_active     := false
     trade_direction  := 0
+    posState         := 0  // allow same-direction re-entry on next signal
+    pyramid_count    := 0  // reset pyramid leg counter for next trade
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 16.5 — PYRAMID / SCALE-IN ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+// Fires additional same-direction entries on winning trades.
+// Triggers: RSI extreme re-hit (newSmartBull/Bear) OR new Claw ATR crossover
+// in trade direction. Requires minimum profit and cooldown between legs.
+float _pyr_atr = ta.atr(14)
+
+bool pyr_buy_ok = enable_pyramiding and is_trade_running and trade_direction == 1 and
+     pyramid_count < max_pyramids and
+     max_profit_pips >= pyramid_min_profit and
+     (bar_index - pyr_last_bar) >= pyramid_cooldown
+
+bool pyr_sell_ok = enable_pyramiding and is_trade_running and trade_direction == -1 and
+     pyramid_count < max_pyramids and
+     max_profit_pips >= pyramid_min_profit and
+     (bar_index - pyr_last_bar) >= pyramid_cooldown
+
+bool pyramid_buy_confirmed  = pyr_buy_ok  and
+     (newSmartBull or (above_buy_cross  and claw_exec_bull)) and barstate.isconfirmed
+bool pyramid_sell_confirmed = pyr_sell_ok and
+     (newSmartBear or (below_sell_cross and claw_exec_bear)) and barstate.isconfirmed
+
+if pyramid_buy_confirmed
+    float _rd       = _pyr_atr * sl_buffer_atr
+    pyr_locked_entry := close
+    pyr_locked_sl    := close - _rd
+    pyr_locked_tp1   := close + _rd
+    pyr_locked_tp2   := close + _rd * 1.5
+    pyr_locked_tp3   := close + _rd * 2.0
+    pyr_locked_risk  := risk_per_trade * pyramid_risk_pct / 100.0
+    pyramid_count    := pyramid_count + 1
+    pyr_last_bar     := bar_index
+    pyr_locked_num   := pyramid_count
+
+if pyramid_sell_confirmed
+    float _rd       = _pyr_atr * sl_buffer_atr
+    pyr_locked_entry := close
+    pyr_locked_sl    := close + _rd
+    pyr_locked_tp1   := close - _rd
+    pyr_locked_tp2   := close - _rd * 1.5
+    pyr_locked_tp3   := close - _rd * 2.0
+    pyr_locked_risk  := risk_per_trade * pyramid_risk_pct / 100.0
+    pyramid_count    := pyramid_count + 1
+    pyr_last_bar     := bar_index
+    pyr_locked_num   := pyramid_count
+
+plotshape(pyramid_buy_confirmed,  title="Pyramid Long",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.orange,0), textcolor=color.white, size=size.tiny, text="🔺")
+plotshape(pyramid_sell_confirmed, title="Pyramid Short", style=shape.triangledown, location=location.abovebar, color=color.new(color.orange,0), textcolor=color.white, size=size.tiny, text="🔺")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 17 — SMC VARIABLES & DECLARATIONS
@@ -2212,6 +2291,7 @@ var int   dpt_rejected_cnt = 0
 var int   dpt_london_cnt   = 0
 var int   dpt_ny_cnt       = 0
 var int   dpt_asia_cnt     = 0
+var int   dpt_pyramid_cnt  = 0
 var bool  dpt_report_sent  = false
 
 bool _new_trading_day = dayofweek != dayofweek[1]
@@ -2232,6 +2312,7 @@ if _new_trading_day
     dpt_london_cnt   := 0
     dpt_ny_cnt       := 0
     dpt_asia_cnt     := 0
+    dpt_pyramid_cnt  := 0
     dpt_active_idx   := -1
     dpt_report_sent  := false
 
@@ -2262,6 +2343,10 @@ if buy_signal_confirmed or sell_signal_confirmed
 
 if rejection_alert
     dpt_rejected_cnt := dpt_rejected_cnt + 1
+
+if pyramid_buy_confirmed or pyramid_sell_confirmed
+    dpt_pyramid_cnt  := dpt_pyramid_cnt + 1
+    dpt_total_sigs   := dpt_total_sigs + 1  // pyramids count as additional signals
 
 if dpt_active_idx >= 0 and dpt_active_idx < array.size(dpt_dir)
     int   _idx = dpt_active_idx
@@ -2317,7 +2402,8 @@ if trade_active and not na(locked_tp1)
          "\n 🎯 TP2: " + _p(locked_tp2) + (tp2_hit ? " ✅" : "") + "  (" + _pip_str(math.abs(locked_tp2-locked_entry)) + ")" +
          "\n 🚀 TP3: " + _p(locked_tp3) + (tp3_hit ? " ✅" : "") + "  (" + _pip_str(math.abs(locked_tp3-locked_entry)) + ")" +
          (holder_mode_active ? "\n 🔱 VWAP Trail: " + _p(vap_current) : "") +
-         "\n 📈 Peak: " + str.tostring(max_profit_pips, "#.##") + " " + pip_unit
+         "\n 📈 Peak: " + str.tostring(max_profit_pips, "#.##") + " " + pip_unit +
+         (pyramid_count > 0 ? "\n 🔺 Scale-In: " + str.tostring(pyramid_count) + "/" + str.tostring(max_pyramids) + " legs active" : "")
 else
     tradeSection := "\n ⚪ Scanning for setup..."
 
@@ -2389,7 +2475,8 @@ if dashOn and not na(dashTable) and barstate.islast
          tradeSection + D +
          L +
          " 📅 TODAY" + D +
-         " Sigs: " + str.tostring(dpt_total_sigs) + "  Blocked: " + str.tostring(dpt_rejected_cnt) + "  LDN: " + str.tostring(dpt_london_cnt) + "  NY: " + str.tostring(dpt_ny_cnt) + D +
+         " Sigs: " + str.tostring(dpt_total_sigs) + "  🔺Pyr: " + str.tostring(dpt_pyramid_cnt) + "  Blocked: " + str.tostring(dpt_rejected_cnt) + D +
+         " LDN: " + str.tostring(dpt_london_cnt) + "  NY: " + str.tostring(dpt_ny_cnt) + "  ASIA: " + str.tostring(dpt_asia_cnt) + D +
          " TP1: " + str.tostring(pip_tp1_hits) + "  TP2: " + str.tostring(pip_tp2_hits) + "  TP3: " + str.tostring(pip_tp3_hits) + "  SL: " + str.tostring(pip_losses) + D +
          " WR: " + wr_ds + "  PF: " + pf_ds + "  Net: " + net_ds + " " + pip_unit + D +
          " Report: " + (dpt_report_sent ? "✅ SENT" : "⏳ " + str.tostring(report_hour_utc) + ":00 UTC") + D +
@@ -2992,6 +3079,43 @@ if short_entry_confirmed
     strategy.close("Long", comment="Long REVERSAL") // Suppressed alert: EA handles via exent=1
     strategy.entry("Short", strategy.short, comment="Short Entry", alert_message=f_format_alert(short_entry_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, risk_per_trade))
 
+// ── Pyramid / Scale-In Entries ────────────────────────────────────────────────
+// Each leg fires under a unique ID so TradeSgnl EA opens a separate position.
+// Auto-trail is also sent to tighten the existing base trade's stop.
+if pyramid_buy_confirmed
+    if pyr_locked_num == 1
+        strategy.entry("Long Pyr1", strategy.long, comment="Long Scale-In 1",
+             alert_message=f_format_alert(ts_long_pyr_msg, 0, pyr_locked_sl, pyr_locked_tp1, pyr_locked_tp2, pyr_locked_tp3, pyr_locked_risk))
+    else if pyr_locked_num == 2
+        strategy.entry("Long Pyr2", strategy.long, comment="Long Scale-In 2",
+             alert_message=f_format_alert(ts_long_pyr_msg, 0, pyr_locked_sl, pyr_locked_tp1, pyr_locked_tp2, pyr_locked_tp3, pyr_locked_risk))
+    else if pyr_locked_num == 3
+        strategy.entry("Long Pyr3", strategy.long, comment="Long Scale-In 3",
+             alert_message=f_format_alert(ts_long_pyr_msg, 0, pyr_locked_sl, pyr_locked_tp1, pyr_locked_tp2, pyr_locked_tp3, pyr_locked_risk))
+    else if pyr_locked_num == 4
+        strategy.entry("Long Pyr4", strategy.long, comment="Long Scale-In 4",
+             alert_message=f_format_alert(ts_long_pyr_msg, 0, pyr_locked_sl, pyr_locked_tp1, pyr_locked_tp2, pyr_locked_tp3, pyr_locked_risk))
+    // Tighten trail on existing base position when adding a pyramid leg
+    float _pyr_atr_trail = ta.atr(14)
+    alert(f_format_modify(ts_long_trail_msg, syminfo.ticker, 0.0, _pyr_atr_trail * 1.5, _pyr_atr_trail * 0.5), alert.freq_once_per_bar_close)
+
+if pyramid_sell_confirmed
+    if pyr_locked_num == 1
+        strategy.entry("Short Pyr1", strategy.short, comment="Short Scale-In 1",
+             alert_message=f_format_alert(ts_short_pyr_msg, 0, pyr_locked_sl, pyr_locked_tp1, pyr_locked_tp2, pyr_locked_tp3, pyr_locked_risk))
+    else if pyr_locked_num == 2
+        strategy.entry("Short Pyr2", strategy.short, comment="Short Scale-In 2",
+             alert_message=f_format_alert(ts_short_pyr_msg, 0, pyr_locked_sl, pyr_locked_tp1, pyr_locked_tp2, pyr_locked_tp3, pyr_locked_risk))
+    else if pyr_locked_num == 3
+        strategy.entry("Short Pyr3", strategy.short, comment="Short Scale-In 3",
+             alert_message=f_format_alert(ts_short_pyr_msg, 0, pyr_locked_sl, pyr_locked_tp1, pyr_locked_tp2, pyr_locked_tp3, pyr_locked_risk))
+    else if pyr_locked_num == 4
+        strategy.entry("Short Pyr4", strategy.short, comment="Short Scale-In 4",
+             alert_message=f_format_alert(ts_short_pyr_msg, 0, pyr_locked_sl, pyr_locked_tp1, pyr_locked_tp2, pyr_locked_tp3, pyr_locked_risk))
+    // Tighten trail on existing base position when adding a pyramid leg
+    float _pyr_atr_trail = ta.atr(14)
+    alert(f_format_modify(ts_short_trail_msg, syminfo.ticker, 0.0, _pyr_atr_trail * 1.5, _pyr_atr_trail * 0.5), alert.freq_once_per_bar_close)
+
 if long_tp1_confirmed
     strategy.close("Long", qty_percent=33.3, comment="Long TP1", alert_message=f_format_alert(long_tp1_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
 
@@ -3041,6 +3165,25 @@ if short_exit_confirmed
 // END — ABSOLUTE DOLLAR AGENT | ADA v8.0
 // © 2026 Absolute Dollar Intelligence | All Rights Reserved
 // Invite-Only | Not Financial Advice
+//
+// WHAT'S NEW IN v8.1 (vs v8.0):
+//
+//   BUG FIX 1 — posState never reset after trade exit
+//     posState := 0 added to exit reset block. Previously stuck at -1/+1 which
+//     caused all same-direction re-entries to fail (posState[1] >= 0 check).
+//     Dashboard "Sigs: 0" and "Blocked: 12" symptom now resolved.
+//
+//   BUG FIX 2 — pyramid_count reset on new base entry + exit
+//     Resets on buy/sell_signal_confirmed AND on sl_alert_event/holder_exit_event.
+//
+//   ADDITION — Section 16.5 Pyramid / Scale-In Engine
+//     Fires additional same-direction entries when in a winning trade.
+//     Triggers: RSI extreme re-hit (newSmartBull/Bear) OR new ATR crossover in
+//     Claw direction while minimum profit is achieved.
+//     Max 2 legs by default (configurable 1–4). Cooldown between legs.
+//     Each leg: 50% risk of base, own ATR-based SL/TP1/2/3.
+//     Fires trail-tighten modify alert on existing position when adding a leg.
+//     Orange triangle markers on chart. strategy() pyramiding=4 to enable.
 //
 // WHAT'S NEW IN v8.0 (vs v7.0 — Claw Protocol Edition):
 //
