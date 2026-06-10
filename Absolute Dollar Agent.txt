@@ -1376,6 +1376,13 @@ string pdh_pdl_status =
          "↔ Inside Range [PDH: " + _p(pdh_level) + " | PDL: " + _p(pdl_level) + "]" :
      "PDH/PDL: Calculating..."
 
+// ── forward-declarations needed by Section 16 (full blocks declared in later sections) ──
+var array<int>  dpt_dir        = array.new<int>()
+var array<bool> dpt_tp1_hit    = array.new<bool>()
+var array<bool> dpt_sl_hit     = array.new<bool>()
+var int         dpt_active_idx = -1
+var float       holder_trail_price = na
+
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 16 — TRADE PROGRESSION ENGINE (TP1/TP2/TP3/HOLDER MODE)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1429,7 +1436,7 @@ if trade_active and not na(locked_tp1)
             trade_phase := "SL_HIT"
 
 // ── Trail Logic ──
-var float holder_trail_price = na
+// holder_trail_price declared before Section 16 (forward-ref fix)
 if holder_mode_active
     if trade_direction == 1
         float pivot_l = ta.lowest(low, 5)
@@ -2188,15 +2195,13 @@ string pip_unit    = syminfo.type == "forex" ? "pips" : "pts"
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 22 — DAILY PERFORMANCE TRACKING (dpt_ arrays)
 // ══════════════════════════════════════════════════════════════════════════════
-var array<int>    dpt_dir       = array.new<int>()
+// dpt_dir, dpt_tp1_hit, dpt_sl_hit, dpt_active_idx declared before Section 16 (forward-ref fix)
 var array<float>  dpt_score     = array.new<float>()
 var array<string> dpt_type      = array.new<string>()
 var array<string> dpt_sess      = array.new<string>()
 var array<float>  dpt_entry_px  = array.new<float>()
-var array<bool>   dpt_tp1_hit   = array.new<bool>()
 var array<bool>   dpt_tp2_hit   = array.new<bool>()
 var array<bool>   dpt_tp3_hit   = array.new<bool>()
-var array<bool>   dpt_sl_hit    = array.new<bool>()
 var array<float>  dpt_max_pips  = array.new<float>()
 var array<int>    dpt_bar_count = array.new<int>()
 
@@ -2205,7 +2210,6 @@ var int   dpt_rejected_cnt = 0
 var int   dpt_london_cnt   = 0
 var int   dpt_ny_cnt       = 0
 var int   dpt_asia_cnt     = 0
-var int   dpt_active_idx   = -1
 var bool  dpt_report_sent  = false
 
 bool _new_trading_day = dayofweek != dayofweek[1]
