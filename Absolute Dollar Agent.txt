@@ -322,6 +322,8 @@ dashTextColor  = input.color(color.black,             "📝 Text Color",      gr
 panelPlacement = input.string("Top-Right", "📍 Placement",
      options=["Top-Right","Top-Left","Bottom-Right","Bottom-Left","Bottom-Center"], group=grpDash)
 showPerfPanel  = input.bool(true,  "Show Performance Table",               group=grpDash)
+tz_offset_hours = input.int(3,    "🕐 UTC Offset (3=Nairobi/EAT)",         group=grpDash, minval=-12, maxval=14, tooltip="UTC+3=Nairobi/EAT  UTC+0=London  UTC+2=Cairo  UTC+5:30=India  UTC+8=SGT  UTC-5=EST")
+tz_label        = input.string("EAT", "Timezone Label",                    group=grpDash, tooltip="Short label shown on dashboard, e.g. EAT, WAT, SGT, EST")
 
 // ── OSCILLATORS ───────────────────────────────────────────────────────────────
 grpOsc        = "📉 Oscillators"
@@ -746,6 +748,7 @@ vp_updateIntra(array<float> o, array<float> h, array<float> l, array<float> c, a
             array.push(vp_ltfVolume, array.get(v, i))
 
 vp_utcHour      = hour(time(timeframe.period, '0000-2400', 'GMT'), 'GMT')
+vp_localHour    = (vp_utcHour + tz_offset_hours) % 24
 vp_newTokyo     = vp_utcHour != vp_utcHour[1] + 1 and vp_utcHour != vp_utcHour[1]
 vp_endTokyo     = vp_utcHour >= 9  and vp_utcHour[1] < 9
 vp_newLondon    = vp_utcHour >= 7  and vp_utcHour[1] < 7
@@ -989,14 +992,19 @@ bullishRegime = positive
 bearishRegime = negative
 vwapBullish   = lastSwing ==  1
 vwapBearish   = lastSwing == -1
-regimeBullish = requireVWAP and requireFibTrend ? (bullishRegime and vwapBullish and trend_fib == 1) :
-                requireVWAP     ? (bullishRegime and vwapBullish) :
-                requireFibTrend ? (bullishRegime and trend_fib == 1) :
-                bullishRegime
-regimeBearish = requireVWAP and requireFibTrend ? (bearishRegime and vwapBearish and trend_fib == -1) :
-                requireVWAP     ? (bearishRegime and vwapBearish) :
-                requireFibTrend ? (bearishRegime and trend_fib == -1) :
-                bearishRegime
+
+// ── Fib Trend pre-computation for regime gate (plots stay in Section 12) ─────
+// Must be here — trend_fib is needed by regimeBullish below; Section 12 is later.
+_fib_basis_gate = ta.ema(ta.ema(src_fib, len_fib), len_fib)
+var int trend_fib = 0
+trend_fib := _fib_basis_gate > _fib_basis_gate[1] ? 1 : _fib_basis_gate < _fib_basis_gate[1] ? -1 : nz(trend_fib[1])
+
+// Sequential single-line ternaries — Pine v6 handles these cleanly.
+// Fib and VWAP are layered filters, NOT a combined hard gate, matching The Claw's architecture.
+regimeBullish = requireVWAP ? (bullishRegime and vwapBullish) : bullishRegime
+regimeBullish := requireFibTrend ? (regimeBullish and trend_fib == 1) : regimeBullish
+regimeBearish = requireVWAP ? (bearishRegime and vwapBearish) : bearishRegime
+regimeBearish := requireFibTrend ? (regimeBearish and trend_fib == -1) : regimeBearish
 
 buy_signal_filtered  = enableRegimeFilter ? (buy_signal  and regimeBullish) : buy_signal
 sell_signal_filtered = enableRegimeFilter ? (sell_signal and regimeBearish) : sell_signal
@@ -1012,9 +1020,9 @@ else if sellEnabled and sell_signal_filtered
         posState := -1
 
 buy_signal_confirmed  = (buyEnabled  and buy_signal_filtered  and posState == 1  and posState[1] <= 0) or
-     (newSmartBull and claw_exec_bull and regimeBullish and posState >= 0)
+     (newSmartBull and claw_exec_bull and regimeBullish and posState <= 0)
 sell_signal_confirmed = (sellEnabled and sell_signal_filtered and posState == -1 and posState[1] >= 0) or
-     (newSmartBear and claw_exec_bear and regimeBearish and posState <= 0)
+     (newSmartBear and claw_exec_bear and regimeBearish and posState >= 0)
 
 buy_sig_vis   = buyEnabled  and buy_signal_filtered
 sell_sig_vis  = sellEnabled and sell_signal_filtered
@@ -1212,10 +1220,9 @@ if barstate.islast and showZones
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 12 — FIBONACCI EXTENSION BANDS
 // ══════════════════════════════════════════════════════════════════════════════
-basis   = ta.ema(ta.ema(src_fib, len_fib), len_fib)
+basis   = _fib_basis_gate  // reuse pre-computed EMA from regime gate above
 vol_fib = useATR_fib ? ta.atr(atrLen_fib) : ta.stdev(src_fib, len_fib)
-var int trend_fib = 0
-trend_fib := basis > basis[1] ? 1 : basis < basis[1] ? -1 : nz(trend_fib[1])
+// trend_fib already declared and computed before Section 7
 
 u1_v = trend_fib == -1 ? basis + vol_fib * 0.618 : na
 u4_v = trend_fib == -1 ? basis + vol_fib * 2.618 : na
@@ -1974,8 +1981,9 @@ liq_bias = close > ph_top and not na(ph_top) ? "💧 BREAKING SWING HIGH" :
      close > ph_top * 0.995 and not na(ph_top) ? "🧲 NEAR SWING HIGH" :
      close < pl_btm * 1.005 and not na(pl_btm) ? "🧲 NEAR SWING LOW" : "⚪ Neutral"
 
-current_session = vp_utcHour >= 13 and vp_utcHour < 22 ? "🗽 NY SESSION" :
-     vp_utcHour >= 7 and vp_utcHour < 16 ? "👑 LONDON SESSION" : "🗼 TOKYO/ASIA"
+current_session = vp_utcHour >= 13 and vp_utcHour < 22 ? "🗽 NY SESSION (" + str.tostring(vp_localHour) + ":xx " + tz_label + ")" :
+     vp_utcHour >= 7 and vp_utcHour < 16 ? "👑 LONDON SESSION (" + str.tostring(vp_localHour) + ":xx " + tz_label + ")" :
+     "🗼 TOKYO/ASIA (" + str.tostring(vp_localHour) + ":xx " + tz_label + ")"
 
 string master_bias = if total_score >= 10 and atrHL == "High"
     "🔥 SOVEREIGN HIGH MOMENTUM BULLISH"
