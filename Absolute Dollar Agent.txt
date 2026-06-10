@@ -1,11 +1,11 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  ABSOLUTE DOLLAR AGENT — ADSA v7.0                                 ║
+// ║  ABSOLUTE DOLLAR AGENT — ADSA v8.0                                 ║
 // ║  Augmented Intelligence Protocol | Super Admin Edition                       ║
 // ║  © Absolute Dollar Intelligence 2026 | All Rights Reserved                  ║
 // ╠══════════════════════════════════════════════════════════════════════════════╣
 // ║  CODENAME  : ABSOLUTE DOLLAR AGENT (ADA)                          ║
 // ║  EDITION   : Super Admin — Invite Only                                      ║
-// ║  VERSION   : Pine Script v6 — Supreme Merge Build                          ║
+// ║  VERSION   : Pine Script v6 — Supreme Merge Build | Claw Protocol Edition  ║
 // ╠══════════════════════════════════════════════════════════════════════════════╣
 // ║  ARCHITECTURE (17 Subsystems):                                               ║
 // ║  [1]  Fractal 4-Layer Consensus (Sovereign/Anchor/Filter/Exec)              ║
@@ -25,6 +25,12 @@
 // ║  [15] Daily Report Engine (full trade log + ML data block)                  ║
 // ║  [16] *** NEW: Live Dollar P&L Tracker (quote-currency, per-bar update)    ║
 // ║  [17] *** NEW: PDH/PDL Context Engine + Tree-Format AI Narrative            ║
+// ║  [18] *** NEW: Claw Liquidity Trail Engine (MTF: M5/M15/H1 direction)      ║
+// ║  [19] *** NEW: Confidence Engine (weighted score gate, Claw Mode)            ║
+// ║  [20] *** NEW: Smart RSI Momentum Signals (extreme zone 75+/25-)             ║
+// ║  [21] *** NEW: Fib Trend Gate (optional, like VWAP — builds confidence)      ║
+// ║  [22] *** NEW: TradeSgnl BE + Trail Automation (auto-modify on TP1/TP2)      ║
+// ║  [23] *** NEW: Orphan Trade Fix (dpt reversal close on new signal)           ║
 // ╠══════════════════════════════════════════════════════════════════════════════╣
 // ║  MERGE LOG v7.0 — SUPREME AGENT ADDITIONS                                  ║
 // ║  [+] Live Dollar P&L on active trade (price_diff × position_size ×        ║
@@ -42,7 +48,7 @@
 // ║  _get_contract_notional() single source of truth.                           ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 //@version=6
-strategy("Absolute Dollar Agent", shorttitle="$ Agent", overlay=true,
+strategy("Absolute Dollar Agent v8", shorttitle="$ Agent", overlay=true,
      max_labels_count=500, max_lines_count=500, max_bars_back=5000, max_boxes_count=500,
      max_polylines_count=100)
 
@@ -181,8 +187,51 @@ showTrailBuy       = input.bool(false, "👁 Show Buy Trail",             group=
 showTrailSell      = input.bool(false, "👁 Show Sell Trail",            group=grpATM)
 enableRegimeFilter = input.bool(true,  "🔒 Enable Regime Filter",       group=grpATM)
 requireVWAP        = input.bool(false,  "📈 Require VWAP Confirmation",  group=grpATM)
+requireFibTrend    = input.bool(false,  "🌀 Require Fib Trend Gate",     group=grpATM,
+     tooltip="When ON, Fib trend must confirm direction. Adds confluence — does NOT hard-gate; agent can still fire if other confluences are strong.")
 useAgentAlerts     = input.bool(true,  "📢 Activate Glass Box Reports", group=grpATM,
      tooltip="Structured reasoning report per event. Set Message = {{alert_message}} in TradingView Alert.")
+
+// ── CLAW LIQUIDITY TRAIL ──────────────────────────────────────────────────────
+grpClaw        = "🦞 Claw Liquidity Trail"
+claw_ma_len    = input.int(200,  "Trail MA Length",    group=grpClaw, minval=10, maxval=500)
+claw_atr_len   = input.int(14,   "Trail ATR Length",   group=grpClaw, minval=1,  maxval=50)
+claw_atr_mult  = input.float(1.25,"Trail ATR Mult",    group=grpClaw, minval=0.5,maxval=5.0,step=0.25)
+showClawTrail  = input.bool(false,"👁 Show Claw Trail", group=grpClaw)
+
+// ── CONFIDENCE ENGINE ─────────────────────────────────────────────────────────
+grpConf         = "🧠 Confidence Engine"
+claw_mode       = input.string("Moderate","Confidence Mode",
+     options=["Conservative","Moderate","Aggressive","Custom"],group=grpConf,
+     tooltip="Conservative=80%, Moderate=60%, Aggressive=40%. Agent executes when confidence ≥ threshold. Does not block signals — shows confidence status.")
+claw_custom_thr = input.int(65,"Custom Threshold %",group=grpConf,minval=0,maxval=100)
+claw_mtf_wt    = input.float(1.5,"MTF Trail Weight",    group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_rsi_wt    = input.float(1.0,"RSI Weight",          group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_vwap_wt   = input.float(1.0,"VWAP Weight",         group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_fib_wt    = input.float(0.5,"Fib Weight",          group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_vp_wt     = input.float(0.5,"VP Weight",           group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_struct_wt = input.float(1.0,"SMC Structure Weight",group=grpConf,minval=0,maxval=3.0,step=0.25)
+enable_smart_signals  = input.bool(true,"🧠 Smart RSI Momentum Signals",group=grpConf,
+     tooltip="Smart signals fire when RSI hits extreme zones (configurable). M5+exec timeframe confirmation.")
+rsi_extreme_bull      = input.int(75,"Smart Bull RSI ≥",group=grpConf,minval=55,maxval=90)
+rsi_extreme_bear      = input.int(25,"Smart Bear RSI ≤",group=grpConf,minval=10,maxval=45)
+use_m5_rsi_confirm    = input.bool(true,"M5 RSI Confirmation",group=grpConf)
+
+// ── TRADESGNL AUTOMATION ──────────────────────────────────────────────────────
+grpTS_auto     = "🤖 TradeSgnl Automation"
+ts_be_on_tp1   = input.bool(true, "✅ Auto BE on TP1 Hit",  group=grpTS_auto,
+     tooltip="Sends modifybuy/sell to move SL to entry + buffer when TP1 is hit.")
+ts_trail_on_tp2 = input.bool(true,"✅ Auto Trail on TP2 Hit",group=grpTS_auto,
+     tooltip="Sends trailing stop modify when TP2 is hit. EA manages the trail on MT5.")
+ts_be_buffer_pts = input.float(5.0,"BE Buffer (pts beyond entry)",group=grpTS_auto,step=0.5)
+ts_long_be_msg  = input.string("LICENSE_ID,{{ticker}},modifybuy,sl_price={{be_price}}",
+     "Long BE Modify",group=grpTS_auto)
+ts_short_be_msg = input.string("LICENSE_ID,{{ticker}},modifysell,sl_price={{be_price}}",
+     "Short BE Modify",group=grpTS_auto)
+ts_long_trail_msg  = input.string("LICENSE_ID,{{ticker}},modifybuy,trail=1,trail_start={{trail_start}},trail_step={{trail_step}}",
+     "Long Trail Modify",group=grpTS_auto)
+ts_short_trail_msg = input.string("LICENSE_ID,{{ticker}},modifysell,trail=1,trail_start={{trail_start}},trail_step={{trail_step}}",
+     "Short Trail Modify",group=grpTS_auto)
 
 // ── RISK MANAGEMENT ───────────────────────────────────────────────────────────
 grpRisk        = "💰 Risk Management"
@@ -480,6 +529,43 @@ _pnl_str(float pnl) =>
 _pf_tag(float pf) =>
     pf == 0.0 ? "NO DATA" : pf >= 2.5 ? "ELITE ✅" : pf >= 2.0 ? "STRONG ✅" :
      pf >= 1.5 ? "GOOD" : pf >= 1.0 ? "MARGINAL ⚠️" : "NEGATIVE ❌"
+
+// ── CLAW TRAIL FUNCTION ───────────────────────────────────────────────────────
+// Ratcheting ATR trail around EMA. Direction is truth, not trigger.
+// var inside function: each request.security() context gets isolated state.
+calcLiqTrail(mlen, alen, amult) =>
+    float t_atr   = ta.atr(alen)
+    float t_ma    = ta.ema(close, mlen)
+    float raw_up  = t_ma - t_atr * amult
+    float raw_dn  = t_ma + t_atr * amult
+    var int   t_trend = 1
+    var float t_trail = na
+    if barstate.isfirst
+        t_trend := close > t_ma ? 1 : -1
+        t_trail := close > t_ma ? raw_up : raw_dn
+    else
+        int   prev_trend = nz(t_trend[1], 1)
+        float prev_trail = nz(t_trail[1], close)
+        if prev_trend == 1
+            t_trail := math.max(raw_up, prev_trail)
+            t_trend := close < t_trail ? -1 : 1
+            if close < t_trail
+                t_trail := raw_dn
+        else
+            t_trail := math.min(raw_dn, prev_trail)
+            t_trend := close > t_trail ? 1 : -1
+            if close > t_trail
+                t_trail := raw_up
+    [t_trend, t_trail]
+
+f_format_modify(string template, string ticker, float be_price, float trail_start, float trail_step) =>
+    string res = template
+    if res != ""
+        res := str.replace_all(res, "{{ticker}}",      ticker)
+        res := str.replace_all(res, "{{be_price}}",    f_alert_p(be_price))
+        res := str.replace_all(res, "{{trail_start}}", f_alert_p(trail_start))
+        res := str.replace_all(res, "{{trail_step}}",  f_alert_p(trail_step))
+    res
 
 _SEP  = "━━━━━━━━━━━━━━━━━━━━━"
 _SEP2 = "─────────────────────"
