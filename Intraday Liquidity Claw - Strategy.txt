@@ -1686,28 +1686,18 @@ else if not dashOn and not na(dashTable)
 // =========================================================================
 // STEP 16: ALERTS (informational — execution rides on order-fill payloads)
 // =========================================================================
-alertcondition(final_long,          title="Claw Long",            message="CLAW-X: LONG ENTRY")
-alertcondition(final_short,         title="Claw Short",           message="CLAW-X: SHORT ENTRY")
-alertcondition(final_ut_buy,        title="UT Buy Executed",      message="CLAW-X: UT BUY EXECUTED")
-alertcondition(final_ut_sell,       title="UT Sell Executed",     message="CLAW-X: UT SELL EXECUTED")
-alertcondition(final_smart_buy,     title="Smart Buy Executed",   message="CLAW-X: SMART BUY EXECUTED")
-alertcondition(final_smart_sell,    title="Smart Sell Executed",  message="CLAW-X: SMART SELL EXECUTED")
-alertcondition(any_rejected_long,   title="⚠️ Long Rejected",    message="CLAW-X: LONG BLOCKED")
-alertcondition(any_rejected_short,  title="⚠️ Short Rejected",   message="CLAW-X: SHORT BLOCKED")
-alertcondition(bullBOS,             title="Bullish BOS",          message="CLAW-X: BULLISH BREAK OF STRUCTURE")
-alertcondition(bearBOS,             title="Bearish BOS",          message="CLAW-X: BEARISH BREAK OF STRUCTURE")
-alertcondition(pcondition,          title="RSI Positive",         message="CLAW-X: RSI POSITIVE MOMENTUM")
-alertcondition(ncondition2,         title="RSI Negative",         message="CLAW-X: RSI NEGATIVE MOMENTUM")
-alertcondition(bull_conf_pass and not bull_conf_pass[1], title="Long Confidence Pass", message="CLAW-X: LONG CONFIDENCE THRESHOLD MET")
-alertcondition(bear_conf_pass and not bear_conf_pass[1], title="Short Confidence Pass", message="CLAW-X: SHORT CONFIDENCE THRESHOLD MET")
-alertcondition(scaled_long,         title="🦞 Scale-In Long",     message="CLAW-X: PYRAMID ADD LONG")
-alertcondition(scaled_short,        title="🦞 Scale-In Short",    message="CLAW-X: PYRAMID ADD SHORT")
-alertcondition(claw_exit_long,      title="⚡ Hard Exit Long",    message="CLAW-X: HARD EXIT LONG (TRAIL FLIP / OPPOSITE SIGNAL)")
-alertcondition(claw_exit_short,     title="⚡ Hard Exit Short",   message="CLAW-X: HARD EXIT SHORT (TRAIL FLIP / OPPOSITE SIGNAL)")
-alertcondition(ssl_sweep,           title="💧 SSL Sweep",         message="CLAW-X: SELL-SIDE LIQUIDITY EXTRACTED (LONG FUEL)")
-alertcondition(bsl_sweep,           title="💧 BSL Sweep",         message="CLAW-X: BUY-SIDE LIQUIDITY EXTRACTED (SHORT FUEL)")
-alertcondition(blocked_long,        title="⛔ Long Blocked (KZ/Risk)",  message="CLAW-X: LONG BLOCKED BY KILL-ZONE OR CIRCUIT BREAKER")
-alertcondition(blocked_short,       title="⛔ Short Blocked (KZ/Risk)", message="CLAW-X: SHORT BLOCKED BY KILL-ZONE OR CIRCUIT BREAKER")
+// NOTE: alertcondition() calls count toward TradingView's 64-plot limit,
+// so this set is curated. The EA never uses these — it listens to the
+// order-fill alert_message payloads from the single strategy alert.
+alertcondition(final_long,                        title="Claw Long",         message="CLAW-X: LONG ENTRY")
+alertcondition(final_short,                       title="Claw Short",        message="CLAW-X: SHORT ENTRY")
+alertcondition(any_rejected_long,                 title="⚠️ Long Rejected",  message="CLAW-X: LONG BLOCKED (GATE/CONFIDENCE)")
+alertcondition(any_rejected_short,                title="⚠️ Short Rejected", message="CLAW-X: SHORT BLOCKED (GATE/CONFIDENCE)")
+alertcondition(scaled_long or scaled_short,       title="🦞 Scale-In",       message="CLAW-X: PYRAMID ADD EXECUTED")
+alertcondition(claw_exit_long or claw_exit_short, title="⚡ Hard Exit",      message="CLAW-X: HARD EXIT (TRAIL FLIP / OPPOSITE SIGNAL)")
+alertcondition(ssl_sweep,                         title="💧 SSL Sweep",      message="CLAW-X: SELL-SIDE LIQUIDITY EXTRACTED (LONG FUEL)")
+alertcondition(bsl_sweep,                         title="💧 BSL Sweep",      message="CLAW-X: BUY-SIDE LIQUIDITY EXTRACTED (SHORT FUEL)")
+alertcondition(blocked_long or blocked_short,     title="⛔ Blocked (KZ/Risk)", message="CLAW-X: ENTRY BLOCKED BY KILL-ZONE OR CIRCUIT BREAKER")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // END — THE CLAW PROTOCOL | INTRADAY LIQUIDITY EXTRACTION v1.0
