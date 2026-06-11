@@ -1,13 +1,13 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  ABSOLUTE DOLLAR AGENT — ADSA v8.0                                 ║
-// ║  Augmented Intelligence Protocol | Super Admin Edition                       ║
-// ║  © Absolute Dollar Intelligence 2026 | All Rights Reserved                  ║
+// ║  ABSOLUTE DOLLAR AGENT — ADSA v8.0                                           ║
+// ║  Augmented Intelligence Protocol                                             ║
+// ║  © Absolute Dollar Intelligence 2026 | All Rights Reserved                   ║
 // ╠══════════════════════════════════════════════════════════════════════════════╣
-// ║  CODENAME  : ABSOLUTE DOLLAR AGENT (ADA)                          ║
-// ║  EDITION   : Super Admin — Invite Only                                      ║
-// ║  VERSION   : Pine Script v6 — Supreme Merge Build | Claw Protocol Edition  ║
+// ║  CODENAME  : ABSOLUTE DOLLAR AGENT (ADA)                                     ║
+// ║  EDITION   : Super Admin — Invite Only                                       ║
+// ║  VERSION   : Pine Script v6 — Supreme Merge Build | Claw Protocol Edition    ║
 // ╠══════════════════════════════════════════════════════════════════════════════╣
-// ║  ARCHITECTURE (17 Subsystems):                                               ║
+// ║  ARCHITECTURE (23 Subsystems):                                               ║
 // ║  [1]  Fractal 4-Layer Consensus (Sovereign/Anchor/Filter/Exec)              ║
 // ║  [2]  Composite 5-Timeframe Scoring Engine (+15 to -15)                    ║
 // ║  [3]  Glass Box Alert Architecture (rich reasoning per event)               ║
@@ -187,7 +187,7 @@ showTrailBuy       = input.bool(false, "👁 Show Buy Trail",             group=
 showTrailSell      = input.bool(false, "👁 Show Sell Trail",            group=grpATM)
 enableRegimeFilter = input.bool(true,  "🔒 Enable Regime Filter",       group=grpATM)
 requireVWAP        = input.bool(false,  "📈 Require VWAP Confirmation",  group=grpATM)
-requireFibTrend    = input.bool(false,  "🌀 Require Fib Trend Gate",     group=grpATM,
+requireFibTrend    = input.bool(true,  "🌀 Require Fib Trend Gate",     group=grpATM,
      tooltip="When ON, Fib trend must confirm direction. Adds confluence — does NOT hard-gate; agent can still fire if other confluences are strong.")
 useAgentAlerts     = input.bool(true,  "📢 Activate Glass Box Reports", group=grpATM,
      tooltip="Structured reasoning report per event. Set Message = {{alert_message}} in TradingView Alert.")
@@ -204,7 +204,7 @@ grpConf         = "🧠 Confidence Engine"
 claw_mode       = input.string("Moderate","Confidence Mode",
      options=["Conservative","Moderate","Aggressive","Custom"],group=grpConf,
      tooltip="Conservative=80%, Moderate=60%, Aggressive=40%. Agent executes when confidence ≥ threshold. Does not block signals — shows confidence status.")
-claw_custom_thr = input.int(65,"Custom Threshold %",group=grpConf,minval=0,maxval=100)
+claw_custom_thr = input.int(60,"Custom Threshold %",group=grpConf,minval=0,maxval=100)
 claw_mtf_wt    = input.float(1.5,"MTF Trail Weight",    group=grpConf,minval=0,maxval=3.0,step=0.25)
 claw_rsi_wt    = input.float(1.0,"RSI Weight",          group=grpConf,minval=0,maxval=3.0,step=0.25)
 claw_vwap_wt   = input.float(1.0,"VWAP Weight",         group=grpConf,minval=0,maxval=3.0,step=0.25)
@@ -213,8 +213,8 @@ claw_vp_wt     = input.float(0.5,"VP Weight",           group=grpConf,minval=0,m
 claw_struct_wt = input.float(1.0,"SMC Structure Weight",group=grpConf,minval=0,maxval=3.0,step=0.25)
 enable_smart_signals  = input.bool(true,"🧠 Smart RSI Momentum Signals",group=grpConf,
      tooltip="Smart signals fire when RSI hits extreme zones (configurable). M5+exec timeframe confirmation.")
-rsi_extreme_bull      = input.int(75,"Smart Bull RSI ≥",group=grpConf,minval=55,maxval=90)
-rsi_extreme_bear      = input.int(25,"Smart Bear RSI ≤",group=grpConf,minval=10,maxval=45)
+rsi_extreme_bull      = input.int(70,"Smart Bull RSI ≥",group=grpConf,minval=55,maxval=85)
+rsi_extreme_bear      = input.int(30,"Smart Bear RSI ≤",group=grpConf,minval=20,maxval=45)
 use_m5_rsi_confirm    = input.bool(true,"M5 RSI Confirmation",group=grpConf)
 
 // ── TRADESGNL AUTOMATION ──────────────────────────────────────────────────────
@@ -909,8 +909,8 @@ bool smartBear   = enable_smart_signals and rsi <= rsi_extreme_bear and change_e
 bool newSmartBull = smartBull and not smartBull[1] and barstate.isconfirmed
 bool newSmartBear = smartBear and not smartBear[1] and barstate.isconfirmed
 
-plotshape(enable_smart_signals and newSmartBull, title="Smart Bull", style=shape.labelup,   location=location.belowbar, color=color.new(#00c853,20), textcolor=color.white, size=size.small, text="🧠B")
-plotshape(enable_smart_signals and newSmartBear, title="Smart Bear", style=shape.labeldown, location=location.abovebar, color=color.new(#d50000,20), textcolor=color.white, size=size.small, text="🧠S")
+plotshape(enable_smart_signals and newSmartBull, title="Smart Bull", style=shape.labelup,   location=location.belowbar, color=color.new(#00c853,20), textcolor=color.white, size=size.tiny, text="🧠buy")
+plotshape(enable_smart_signals and newSmartBear, title="Smart Bear", style=shape.labeldown, location=location.abovebar, color=color.new(#d50000,20), textcolor=color.white, size=size.tiny, text="🧠sell")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 6.5 — CLAW MULTI-TIMEFRAME LIQUIDITY TRAIL
@@ -3059,7 +3059,7 @@ if short_exit_confirmed
 //   ADDITION 3 — Smart RSI Momentum Signals (Section 6)
 //     smartBull/smartBear fire when RSI hits extreme zones (75+/25-)
 //     M5 RSI + EMA5 momentum confirmation (optional)
-//     Plotted as 🧠B / 🧠S labels on chart
+//     Plotted as 🧠buy / 🧠sell labels on chart
 //     Wired into buy_signal_confirmed / sell_signal_confirmed via OR gate
 //
 //   ADDITION 4 — Fib Trend Gate (Section 7)
