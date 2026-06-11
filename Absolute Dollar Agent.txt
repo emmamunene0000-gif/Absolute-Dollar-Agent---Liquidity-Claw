@@ -2603,6 +2603,7 @@ bool alert_liq_sell_sweep = ta.crossunder(close, pl_btm)
 
 bool trigger_signal = not silence_mode and (
      buy_signal_confirmed or sell_signal_confirmed or
+     pyramid_buy_confirmed or pyramid_sell_confirmed or
      tp1_alert_event or tp2_alert_event or tp3_alert_event or
      sl_alert_event or holder_exit_event or rejection_alert or
      alert_liq_buy_sweep or alert_liq_sell_sweep or
@@ -2617,246 +2618,396 @@ if useAgentAlerts and barstate.isconfirmed and (trigger_signal or silence_broadc
     string sl_autopsy = _build_sl_autopsy()
     string _sym       = syminfo.ticker + " | " + timeframe.period
 
-    string event_title = ""
-    string event_commentary = ""
+    // ── shared time string ────────────────────────────────────────────────
+    string _time_str = _pad(vp_localHour) + ":" + _pad(minute) + " " + tz_label
+    string _hdr_line = syminfo.ticker + " | " + timeframe.period + " | " + _p(close) + " | " + current_session + " | " + _time_str
+
+    // ── SMART CARD: each event owns its full self-contained card ──────────
+    string prem = ""
+    string pub  = ""
 
     if silence_broadcast
-        event_title       := "🔇 ADMIN SILENCE — STANDING ASIDE"
-        event_commentary  := atrHL == "Low" ? "⚠️ LOW VOLATILITY — chopzone active. No setups until ATR expands." :
-             math.abs(total_score) < 3 ? "⚠️ MIXED ALIGNMENT — Score: " + str.tostring(total_score,"#.#") + "/15. Conditions unclear." :
-             "Operator discretion active. Monitoring only."
+        prem  := _SEP + "\n"
+        prem += "🔇 AGENT SILENCED — STANDING ASIDE\n"
+        prem += _hdr_line + "\n"
+        prem += _SEP + "\n"
+        prem += (atrHL == "Low" ? "ATR = LOW — chopzone active. No setups until ATR expands." :
+             math.abs(total_score) < 3 ? "Score " + str.tostring(total_score,"#.#") + "/15 — mixed alignment. Conditions unclear." :
+             "Operator discretion active. Monitoring only.") + "\n"
         if admin_commentary != ""
-            event_commentary += "\n💬 OPERATOR NOTE: " + admin_commentary
+            prem += _SEP2 + "\n"
+            prem += "💬 OPERATOR NOTE: " + admin_commentary + "\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if sl_alert_event
-        event_title      := "💀 STOP HIT — GLASS BOX AUTOPSY"
-        event_commentary := "🔬 " + sl_autopsy + "\n" +
-             "Peak before stop: " + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + "\n" +
-             "Min-unit loss est.: ~$" + str.tostring(locked_actual_risk,"#.##") + "\n" +
-             "Score at entry: " + str.tostring(total_score,"#.#") + "/15\n" +
-             "Every loss is data. Reassessing now."
+        prem  := _SEP + "\n"
+        prem += "💀 STOP ABSORBED — GLASS BOX AUTOPSY\n"
+        prem += syminfo.ticker + " | " + (trade_direction==1?"LONG":"SHORT") + " | " + atm_trade_id + "\n"
+        prem += _SEP + "\n"
+        prem += "🔬 " + sl_autopsy + "\n"
+        prem += _SEP2 + "\n"
+        prem += "Peak before stop: " + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + "\n"
+        prem += "Score at entry:   " + str.tostring(total_score,"#.#") + "/15\n"
+        if show_risk_info
+            prem += "Risk absorbed:    ~$" + str.tostring(locked_actual_risk,"#.##") + "\n"
+        prem += _SEP2 + "\n"
+        prem += "Every loss is data. Reassessing.\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if holder_exit_event
-        event_title      := "🏁 HOLDER MODE EXIT — VWAP CROSSED"
-        event_commentary := "Direction: " + (trade_direction==1?"LONG":"SHORT") + "\n" +
-             "VWAP Trail crossed: " + _p(vap_current) + "\n" +
-             "Peak run: " + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + "\n" +
-             "Protocol: Close remaining position. Swing leg exhausted."
+        prem  := _SEP + "\n"
+        prem += "🏁 HOLDER EXIT — VWAP TRAIL TRIGGERED\n"
+        prem += syminfo.ticker + " | " + (trade_direction==1?"LONG":"SHORT") + " from " + _p(locked_entry) + "\n"
+        prem += _SEP + "\n"
+        prem += "VWAP cross: " + _p(vap_current) + "\n"
+        prem += "Peak run:   " + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + "\n"
+        prem += "Protocol: Close remaining. Swing leg complete.\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if tp3_alert_event
-        event_title      := "🚀 TP3 HIT — HOLDER MODE ACTIVATED (2:1)"
-        event_commentary := "Close 75% at TP3 (" + _p(locked_tp3) + ").\n" +
-             "Trail 25% using Adaptive VWAP: " + _p(vap_current) + "\n" +
-             "Exit fires when price crosses back through VWAP."
+        prem  := _SEP + "\n"
+        prem += "🚀 TP3 CLEARED — HOLDER MODE ACTIVE (2:1)\n"
+        prem += syminfo.ticker + " | " + (trade_direction==1?"LONG":"SHORT") + " from " + _p(locked_entry) + "\n"
+        prem += _SEP + "\n"
+        prem += "✅ 34% taken at " + _p(locked_tp3) + "\n"
+        prem += "🔱 VWAP Trail: " + _p(vap_current) + "\n"
+        prem += "Exit triggers on VWAP cross.\n"
+        prem += _SEP2 + "\n"
+        prem += "🏷 " + atm_trade_id + "\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if tp2_alert_event
-        event_title      := "🎯🎯 TP2 HIT — MOVE STOP TO BREAKEVEN (1.5:1)"
-        event_commentary := "Take 50% off the position.\n" +
-             "Move SL to entry: " + _p(locked_entry) + "\n" +
-             "Position is now RISK-FREE. Hunting TP3 at " + _p(locked_tp3) + "."
+        prem  := _SEP + "\n"
+        prem += "🎯🎯 TP2 SECURED — RISK-FREE POSITION (1.5:1)\n"
+        prem += syminfo.ticker + " | " + (trade_direction==1?"LONG":"SHORT") + " from " + _p(locked_entry) + "\n"
+        prem += _SEP + "\n"
+        prem += "✅ 33% taken at " + _p(locked_tp2) + "\n"
+        prem += "🔐 SL at breakeven: " + _p(locked_entry) + "\n"
+        prem += "🚀 Hunting TP3 → " + _p(locked_tp3) + "  (2:1)\n"
+        prem += _SEP2 + "\n"
+        prem += "Position risk-free. Agent trailing.\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if tp1_alert_event
-        event_title      := "🎯 TP1 HIT — PARTIAL SECURED (1:1)"
-        event_commentary := "Take 25–33% off. Tighten SL toward entry.\n" +
-             "Next target: TP2 at " + _p(locked_tp2) + "."
+        prem  := _SEP + "\n"
+        prem += "🎯 TP1 CLEARED — LEG 1 SECURED (1:1)\n"
+        prem += syminfo.ticker + " | " + (trade_direction==1?"LONG":"SHORT") + " from " + _p(locked_entry) + "\n"
+        prem += _SEP + "\n"
+        prem += "✅ 33% taken at " + _p(locked_tp1) + "\n"
+        prem += "🔐 Breakeven set → " + _p(locked_entry) + "\n"
+        prem += "🎯 Hunting TP2 → " + _p(locked_tp2) + "  (1.5:1)\n"
+        prem += _SEP2 + "\n"
+        prem += "Agent sending BE modify to MT5.\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if rejection_alert
-        event_title      := "⛔ SIGNAL BLOCKED — REGIME FILTER"
-        event_commentary := buy_rejected ?
-             "LONG blocked. Sovereign: " + sovereignStatus + " | Score: " + str.tostring(total_score,"#.#") + "/15\n" +
-             "RSI/VWAP/Regime misaligned. Silence = a position." :
-             "SHORT blocked. Sovereign: " + sovereignStatus + " | Score: " + str.tostring(total_score,"#.#") + "/15\n" +
-             "Counter-trend entries fail more. Waiting for alignment."
+        prem  := _SEP + "\n"
+        prem += "⛔ SIGNAL BLOCKED — REGIME FILTER\n"
+        prem += syminfo.ticker + " | " + (buy_rejected?"LONG":"SHORT") + " attempt\n"
+        prem += _SEP + "\n"
+        prem += "Sync:     " + agent_sync_phase + "\n"
+        prem += "Score:    " + str.tostring(total_score,"#.#") + "/15 | Sovereign: " + sovereignStatus + "\n"
+        prem += (buy_rejected ? "RSI/VWAP/Regime misaligned for longs." : "Counter-trend entries fail more. Alignment absent.") + "\n"
+        prem += _SEP2 + "\n"
+        prem += "Silence = a position. Standing aside.\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
-    else if buy_signal_confirmed
-        event_title := master_sync_buy       ? "🔥 MASTER SYNC LONG — 4-LAYER ALIGNED" :
-             sovereign_counter_buy ? "⚠️ SOVEREIGN COUNTER-TREND LONG"     :
-             "🟢 LONG SIGNAL CONFIRMED"
-        event_commentary := master_sync_buy ?
-             "All 4 layers BULLISH. Sovereign + Commander + Navigator + Executor aligned.\n" +
-             "Score: " + str.tostring(total_score,"#.#") + "/15 | ATR: " + atrHL + "\n" +
-             "High-probability trend continuation. R:R 2.0+ advised." :
-             sovereign_counter_buy ?
-             "⚠️ Daily is BEARISH. Counter-trend long.\n" +
-             "RULE: Target TP1 only. Do NOT hold to TP3.\n" +
-             "Score: " + str.tostring(total_score,"#.#") + "/15" :
-             "Local alignment confirmed. Sovereign: " + sovereignStatus + "\n" +
-             "Score: " + str.tostring(total_score,"#.#") + "/15 | " + ai_advice
+    else if buy_signal_confirmed or sell_signal_confirmed
+        // ── EXECUTION CARD ─────────────────────────────────────────────────
+        bool   _is_buy  = buy_signal_confirmed
+        string _e_icon  = master_sync_buy       ? "🔥 ABSOLUTE DOLLAR — MASTER SYNC LONG"      :
+             master_sync_sell       ? "🥶 ABSOLUTE DOLLAR — MASTER SYNC SHORT"     :
+             sovereign_counter_buy  ? "⚠️ ABSOLUTE DOLLAR — COUNTER-TREND LONG"   :
+             sovereign_counter_sell ? "⚠️ ABSOLUTE DOLLAR — COUNTER-TREND SHORT"  :
+             _is_buy                ? "🟢 ABSOLUTE DOLLAR — LONG SIGNAL"           :
+                                      "🔴 ABSOLUTE DOLLAR — SHORT SIGNAL"
+        string _e_dir   = _is_buy ? "🟢 LONG" : "🔴 SHORT"
+        string _e_sz    = _size_display(locked_position_size)
+        string _e_ctwrn = sovereign_counter_buy  ? "⚠️ COUNTER-TREND: Daily BEAR. Target TP1 only.\n" :
+             sovereign_counter_sell ? "⚠️ COUNTER-TREND: Daily BULL. Target TP1 only.\n" : ""
+        prem  := _SEP + "\n"
+        prem += _e_icon + "\n"
+        prem += _hdr_line + "\n"
+        prem += _SEP + "\n"
+        prem += "📋 EXECUTION PLAN\n"
+        prem += _e_dir + " @ " + _p(locked_entry) + "\n"
+        prem += "🛑 SL   → " + _p(locked_sl) + "  (-" + _pip_str(locked_risk_dist) + ")\n"
+        prem += "🎯 TP1  → " + _p(locked_tp1) + "  (1:1)\n"
+        prem += "🎯 TP2  → " + _p(locked_tp2) + "  (1.5:1)\n"
+        prem += "🚀 TP3  → " + _p(locked_tp3) + "  (2:1)\n"
+        prem += "💰 $" + str.tostring(risk_per_trade) + " risk" +
+             (show_risk_info ? " | ~$" + str.tostring(locked_actual_risk,"#.##") + " unit" : "") +
+             " | " + _e_sz + "\n"
+        prem += _SEP2 + "\n"
+        prem += "⚡ WHY NOW\n"
+        prem += agent_sync_phase + "\n"
+        prem += "Score: " + str.tostring(total_score,"#.#") + "/15 | " + effective_bias + "\n"
+        prem += "Daily: " + pdh_pdl_status + "\n"
+        prem += "Claw:  " + claw_dir_str + "\n"
+        if _e_ctwrn != ""
+            prem += _e_ctwrn
+        prem += _SEP2 + "\n"
+        prem += "🏗 5-LAYER READ\n"
+        prem += tree_narrative
+        prem += _SEP2 + "\n"
+        prem += ai_advice + "\n"
+        prem += "PF: " + (pip_pf==0.0?"—":str.tostring(math.min(pip_pf,99.9),"#.##")) +
+             "  WR: " + (pip_total_signals>0?str.tostring(pip_win_rate,"##.#")+"%":"—") + "\n"
+        if admin_commentary != ""
+            prem += _SEP2 + "\n💬 " + admin_commentary + "\n"
+        prem += "🏷 " + atm_trade_id + "\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
-    else if sell_signal_confirmed
-        event_title := master_sync_sell       ? "🥶 MASTER SYNC SHORT — 4-LAYER ALIGNED" :
-             sovereign_counter_sell ? "⚠️ SOVEREIGN COUNTER-TREND SHORT"    :
-             "🔴 SHORT SIGNAL CONFIRMED"
-        event_commentary := master_sync_sell ?
-             "All 4 layers BEARISH. Sovereign + Commander + Navigator + Executor aligned.\n" +
-             "Score: " + str.tostring(total_score,"#.#") + "/15 | ATR: " + atrHL + "\n" +
-             "High-probability trend continuation. R:R 2.0+ advised." :
-             sovereign_counter_sell ?
-             "⚠️ Daily is BULLISH. Counter-trend short.\n" +
-             "RULE: Target TP1 only. Do NOT hold to TP3.\n" +
-             "Score: " + str.tostring(total_score,"#.#") + "/15" :
-             "Local alignment confirmed. Sovereign: " + sovereignStatus + "\n" +
-             "Score: " + str.tostring(total_score,"#.#") + "/15 | " + ai_advice
+    else if pyramid_buy_confirmed or pyramid_sell_confirmed
+        // ── SCALE-IN CARD ──────────────────────────────────────────────────
+        bool   _pyr_buy  = pyramid_buy_confirmed
+        string _pyr_dir  = _pyr_buy ? "🟢 LONG" : "🔴 SHORT"
+        string _pyr_side = _pyr_buy ? "LONG" : "SHORT"
+        prem  := _SEP + "\n"
+        prem += "🔺 SCALE-IN LEG " + str.tostring(pyr_locked_num) + " — ADDING TO " + _pyr_side + "\n"
+        prem += syminfo.ticker + " | " + timeframe.period + " | Winner running\n"
+        prem += _SEP + "\n"
+        prem += "📋 PYRAMID PLAN\n"
+        prem += _pyr_dir + " @ " + _p(pyr_locked_entry) + "\n"
+        prem += "🛑 SL   → " + _p(pyr_locked_sl) + "\n"
+        prem += "🚀 TP3  → " + _p(pyr_locked_tp3) + "  (2:1)\n"
+        prem += "💰 $" + str.tostring(pyr_locked_risk,"#.##") + " (" + str.tostring(pyramid_risk_pct,"#.#") + "% base)\n"
+        prem += _SEP2 + "\n"
+        prem += "Trigger: RSI extreme + " + claw_dir_str + "\n"
+        prem += "Base trade: +" + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + " unrealised\n"
+        prem += "Agent tightening base trail simultaneously.\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if alert_liq_buy_sweep
-        event_title      := "⚠️ BUY-SIDE LIQUIDITY SWEPT"
-        event_commentary := "Pool at " + _p(ph_top) + " has been swept.\n" +
-             "FALSE BREAK → Reversal long incoming. Wait for CHoCH on lower TF.\n" +
-             "BREAKOUT    → Continuation above. Wait for retest.\n" +
-             "Structure: " + (swingTrend.bias==BULLISH?"Bullish":"Bearish") + " | Do not react immediately."
+        prem  := _SEP + "\n"
+        prem += "⚠️ BUY-SIDE LIQUIDITY SWEPT\n"
+        prem += syminfo.ticker + " | Pool: " + _p(ph_top) + "\n"
+        prem += _SEP + "\n"
+        prem += "FALSE BREAK → Reversal long. Wait for CHoCH.\n"
+        prem += "BREAKOUT    → Continuation above. Wait for retest.\n"
+        prem += "Structure: " + (swingTrend.bias==BULLISH?"Bullish":"Bearish") + " | Claw: " + claw_dir_str + "\n"
+        prem += _SEP2 + "\n"
+        prem += "Agent scanning. Do not react immediately.\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if alert_liq_sell_sweep
-        event_title      := "⚠️ SELL-SIDE LIQUIDITY SWEPT"
-        event_commentary := "Pool at " + _p(pl_btm) + " has been swept.\n" +
-             "FALSE BREAK → Reversal short incoming. Wait for CHoCH.\n" +
-             "BREAKDOWN   → Continuation below. Wait for retest.\n" +
-             "Structure: " + (swingTrend.bias==BULLISH?"Bullish":"Bearish") + " | Do not react immediately."
+        prem  := _SEP + "\n"
+        prem += "⚠️ SELL-SIDE LIQUIDITY SWEPT\n"
+        prem += syminfo.ticker + " | Pool: " + _p(pl_btm) + "\n"
+        prem += _SEP + "\n"
+        prem += "FALSE BREAK → Reversal short. Wait for CHoCH.\n"
+        prem += "BREAKDOWN   → Continuation below. Wait for retest.\n"
+        prem += "Structure: " + (swingTrend.bias==BULLISH?"Bullish":"Bearish") + " | Claw: " + claw_dir_str + "\n"
+        prem += _SEP2 + "\n"
+        prem += "Agent scanning. Do not react immediately.\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if currentAlerts.swingBullishBOS or currentAlerts.swingBullishCHoCH
-        event_title      := "📈 BULLISH STRUCTURE SHIFT (BOS/CHoCH)"
-        event_commentary := "Sellers are losing control. Scanning for discount pullback entries.\n" +
-             "Score: " + str.tostring(total_score,"#.#") + "/15 | Liq: " + liq_bias
+        string _bull_bos_type = currentAlerts.swingBullishBOS ? "BOS" : "CHoCH"
+        prem  := _SEP + "\n"
+        prem += "📈 BULLISH STRUCTURE SHIFT — " + _bull_bos_type + "\n"
+        prem += syminfo.ticker + " | " + timeframe.period + "\n"
+        prem += _SEP + "\n"
+        prem += "Sellers losing control. Agent scanning discount entries.\n"
+        prem += "Score: " + str.tostring(total_score,"#.#") + "/15 | Claw: " + claw_dir_str + "\n"
+        prem += "Liq: " + liq_bias + "\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if currentAlerts.swingBearishBOS or currentAlerts.swingBearishCHoCH
-        event_title      := "📉 BEARISH STRUCTURE SHIFT (BOS/CHoCH)"
-        event_commentary := "Buyers are losing control. Scanning for premium pullback entries.\n" +
-             "Score: " + str.tostring(total_score,"#.#") + "/15 | Liq: " + liq_bias
+        string _bear_bos_type = currentAlerts.swingBearishBOS ? "BOS" : "CHoCH"
+        prem  := _SEP + "\n"
+        prem += "📉 BEARISH STRUCTURE SHIFT — " + _bear_bos_type + "\n"
+        prem += syminfo.ticker + " | " + timeframe.period + "\n"
+        prem += _SEP + "\n"
+        prem += "Buyers losing control. Agent scanning premium entries.\n"
+        prem += "Score: " + str.tostring(total_score,"#.#") + "/15 | Claw: " + claw_dir_str + "\n"
+        prem += "Liq: " + liq_bias + "\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
     else if vp_newSession
-        event_title      := "🕒 SESSION OPEN — ENVIRONMENTAL SCAN"
-        event_commentary := current_session + "\n" +
-             (atrHL=="Low"      ? "⚠️ LOW VOLATILITY: No signals until ATR expands." :
-              math.abs(total_score) < 3 ? "⚠️ MIXED ALIGNMENT: Score " + str.tostring(total_score,"#.#") + "/15. Waiting." :
-              total_score >= 3  ? "✅ BULLISH CONDITIONS: Score " + str.tostring(total_score,"#.#") + "/15." :
-              "✅ BEARISH CONDITIONS: Score " + str.tostring(total_score,"#.#") + "/15.") + "\n" +
-             "Sovereign: " + sovereignStatus + " | Liq: " + liq_bias
+        // ── BATTLE PLAN CARD ───────────────────────────────────────────────
+        string _sesh_icon = vp_utcHour >= 13 and vp_utcHour < 22 ? "🗽 NEW YORK"    :
+             vp_utcHour >= 7  and vp_utcHour < 16 ? "👑 LONDON" : "🗼 TOKYO/ASIA"
+        string _hunt_dir  = total_score >= 3 ? "LONG" : total_score <= -3 ? "SHORT" : "BOTH WAYS"
+        string _atr_note  = atrHL == "High" ? "Expansion active. Setups live."       :
+             atrHL == "Low" ? "⚠️ Low vol — no setups until ATR expands." : "Moderate vol — selective."
+        string _sess_pf   = pip_pf == 0.0 ? "—" : str.tostring(math.min(pip_pf,99.9),"#.##")
+        prem  := _SEP + "\n"
+        prem += _sesh_icon + " SESSION — BATTLE PLAN\n"
+        prem += syminfo.ticker + " | " + timeframe.period + " | " + _p(close) + " | " + _time_str + "\n"
+        prem += _SEP + "\n"
+        prem += "📋 SESSION HYPOTHESIS\n"
+        prem += "Bias:  " + effective_bias + "\n"
+        prem += "Score: " + str.tostring(total_score,"#.#") + "/15 | Sovereign: " + sovereignStatus + "\n"
+        prem += "Daily: " + pdh_pdl_status + "\n"
+        prem += "ATR:   " + atrHL + " — " + _atr_note + "\n"
+        prem += "Agent: HUNTING " + _hunt_dir + " SETUPS\n"
+        prem += _SEP2 + "\n"
+        prem += "⚡ SIGNAL STATUS\n"
+        prem += "Sync:  " + agent_sync_phase + "\n"
+        prem += "Claw:  " + claw_dir_str + "\n"
+        prem += "Today: " + str.tostring(dpt_total_sigs) + " sigs | PF: " + _sess_pf + "\n"
+        prem += _SEP2 + "\n"
+        prem += "🎯 KEY LEVELS\n"
+        prem += "🔴 Sell-side liq: " + _p(pl_btm) + "\n"
+        prem += "🟢 Buy-side liq:  " + _p(ph_top) + "\n"
+        prem += "Context: " + liq_bias + "\n"
+        prem += _SEP + "\n"
+        prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
 
-    // ── Build trade parameters block ──────────────────────────────────────
-    string _tparams = ""
-    if (buy_signal_confirmed or sell_signal_confirmed) and not na(locked_tp1)
-        string sz        = _size_display(locked_position_size)
-        string risk_info = show_risk_info ?
-             "Min-unit risk: ~$" + str.tostring(locked_actual_risk,"#.##") + "\n" : ""
-        _tparams :=
-             _SEP2 + "\n" +
-             "🎯 TRADE PARAMETERS\n" +
-             _SEP2 + "\n" +
-             "Direction  : " + (buy_signal_confirmed ? "🟢 LONG"  : "🔴 SHORT") + "\n" +
-             "Entry      : " + _p(locked_entry) + "\n" +
-             "Stop Loss  : " + _p(locked_sl)    + "  (" + _pip_str(locked_risk_dist) + ")\n" +
-             "TP1 (1:1)  : " + _p(locked_tp1)   + "  (" + _pip_str(math.abs(locked_tp1-locked_entry)) + ")\n" +
-             "TP2 (1.5:1): " + _p(locked_tp2)   + "  (" + _pip_str(math.abs(locked_tp2-locked_entry)) + ")\n" +
-             "TP3 (2:1)  : " + _p(locked_tp3)   + "  (" + _pip_str(math.abs(locked_tp3-locked_entry)) + ")\n" +
-             "Risk $     : $" + str.tostring(risk_per_trade) + " → " + sz + "\n" +
-             risk_info +
-             "Trade ID   : " + atm_trade_id + "\n" +
-             "4-Layer    : " + agent_sync_phase + "\n"
-
-    // ── Build narrative block (NOW INCLUDES TREE FORMAT + PDH/PDL) ────────
-    string _narrative =
-             _SEP2 + "\n" +
-             "🧠 GLASS BOX AI NARRATIVE\n" +
-             _SEP2 + "\n" +
-             "Master Bias  : " + effective_bias + "\n" +
-             "Score        : " + str.tostring(total_score,"#.#") + "/15\n" +
-             "Daily Context: " + pdh_pdl_status + "\n" +
-             _SEP2 + "\n" +
-             "5-LAYER TREE\n" +
-             tree_narrative +
-             _SEP2 + "\n" +
-             "💡 AGENT ADVICE\n" +
-             ai_advice + "\n" +
-             "PF: " + (pip_pf==0.0?"—":str.tostring(math.min(pip_pf,99.9),"#.##")) +
-             "  WR: " + (pip_total_signals>0?str.tostring(pip_win_rate,"##.#")+"%":"—") + "\n"
-
-    // ══════════════════════════════════════════════════════════════════════
-    // PREMIUM / WAR ROOM (full Glass Box)
-    // ══════════════════════════════════════════════════════════════════════
-    string prem = ""
-    prem += _SEP + "\n"
-    prem += "🔥 ABSOLUTE DOLLAR — WAR ROOM\n"
-    prem += "Supreme Agent ADSA v8.0\n"
-    prem += _SEP + "\n"
-    prem += "📊 Asset   : " + _sym + "\n"
-    prem += "💰 Price   : " + _p(close) + "\n"
-    prem += "🌍 Session : " + current_session + "\n"
-    prem += "📅 Daily   : " + pdh_pdl_status + "\n"
-    if asset_context != ""
-        prem += "📌 Context : " + asset_context + "\n"
-    prem += _SEP2 + "\n"
-    prem += "🔔 EVENT: " + event_title + "\n"
-    prem += _SEP2 + "\n"
-    prem += "📝 AGENT COMMENTARY\n"
-    prem += event_commentary + "\n"
-    if _tparams != ""
-        prem += _tparams
-    prem += _narrative
-    if admin_commentary != ""
-        prem += _SEP2 + "\n💬 OPERATOR NOTE\n" + admin_commentary + "\n"
-    prem += _SEP2 + "\n"
-    prem += "🧊 LIQUIDITY\n"
-    prem += "Buy-side  : " + _p(ph_top)  + "\n"
-    prem += "Sell-side : " + _p(pl_btm)  + "\n"
-    prem += "Context   : " + liq_bias    + "\n"
-    prem += _SEP + "\n"
-    prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
-
-    // ══════════════════════════════════════════════════════════════════════
-    // PUBLIC / FREE CHANNEL (sanitized)
-    // ══════════════════════════════════════════════════════════════════════
-    string pub = ""
-    pub += _SEP + "\n"
-    pub += "🤖 ABSOLUTE DOLLAR — ATM AGENT\n"
-    pub += "Supreme Agent ADSA v8.0\n"
-    pub += _SEP + "\n"
-    pub += "📊 Asset   : " + _sym + "\n"
-    pub += "🌍 Session : " + current_session + "\n"
-    pub += "📅 Daily   : " + pdh_pdl_status + "\n"
-    if asset_context != ""
-        pub += "📌 Context : " + asset_context + "\n"
-    pub += _SEP2 + "\n"
-    pub += "🔔 EVENT: " + event_title + "\n"
-    pub += _SEP2 + "\n"
-
+    // ── PUBLIC CHANNEL (sanitized coaching card) ───────────────────────────
     if tg_public_sanitize
         if silence_broadcast
-            pub += "📝 COMMENTARY\n🔇 Standing aside — operator silenced signals.\n"
+            pub  := _SEP + "\n"
+            pub += "🔇 AGENT SILENCED\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Standing aside — operator silenced signals.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
         else if sl_alert_event
-            pub += "📝 COMMENTARY\n💀 Stop absorbed. Glass Box logging. Reassessing.\n"
+            pub  := _SEP + "\n"
+            pub += "💀 STOP ABSORBED — GLASS BOX LOGGING\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Stop hit. Agent logging autopsy. Reassessing.\n"
+            pub += "Score at entry: " + str.tostring(total_score,"#.#") + "/15\n"
+            pub += _SEP2 + "\n"
+            pub += "Every loss is data.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
+        else if holder_exit_event
+            pub  := _SEP + "\n"
+            pub += "🏁 HOLDER EXIT — POSITION CLOSED\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "VWAP trail triggered. Swing leg complete.\n"
+            pub += "Peak run: " + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + "\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
         else if tp3_alert_event
-            pub += "📝 COMMENTARY\n🚀 TP3 hit — full 2:1 run complete.\n"
+            pub  := _SEP + "\n"
+            pub += "🚀 TP3 HIT — FULL 2:1 RUN\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Position reached 2:1 target.\n"
+            pub += "Holder mode: trailing VWAP on final leg.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
         else if tp2_alert_event
-            pub += "📝 COMMENTARY\n🎯🎯 TP2 hit — move stop to breakeven.\n"
+            pub  := _SEP + "\n"
+            pub += "🎯🎯 TP2 HIT — RISK-FREE (1.5:1)\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Partial secured. Stop at breakeven.\n"
+            pub += "Hunting final target at TP3.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
         else if tp1_alert_event
-            pub += "📝 COMMENTARY\n🎯 TP1 hit — partial secured.\n"
-        else if buy_signal_confirmed
-            pub += "📝 COMMENTARY\n" + (master_sync_buy?"🔥 Master Sync Long — 4 layers aligned.\n":sovereign_counter_buy?"⚠️ Counter-trend long — TP1 target only.\n":"🟢 Long signal confirmed.\n")
-        else if sell_signal_confirmed
-            pub += "📝 COMMENTARY\n" + (master_sync_sell?"🥶 Master Sync Short — 4 layers aligned.\n":sovereign_counter_sell?"⚠️ Counter-trend short — TP1 target only.\n":"🔴 Short signal confirmed.\n")
+            pub  := _SEP + "\n"
+            pub += "🎯 TP1 HIT — LEG 1 SECURED (1:1)\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Partial secured at 1:1.\n"
+            pub += "Agent setting breakeven on MT5.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
+        else if buy_signal_confirmed or sell_signal_confirmed
+            bool   _pub_buy  = buy_signal_confirmed
+            string _pub_type = master_sync_buy       ? "🔥 MASTER SYNC LONG — 4 LAYERS ALIGNED"   :
+                 master_sync_sell       ? "🥶 MASTER SYNC SHORT — 4 LAYERS ALIGNED"  :
+                 sovereign_counter_buy  ? "⚠️ COUNTER-TREND LONG — TP1 TARGET ONLY"  :
+                 sovereign_counter_sell ? "⚠️ COUNTER-TREND SHORT — TP1 TARGET ONLY" :
+                 _pub_buy               ? "🟢 LONG SIGNAL CONFIRMED"                  :
+                                          "🔴 SHORT SIGNAL CONFIRMED"
+            pub  := _SEP + "\n"
+            pub += _pub_type + "\n"
+            pub += syminfo.ticker + " | " + timeframe.period + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Score: " + str.tostring(total_score,"#.#") + "/15 | " + effective_bias + "\n"
+            pub += "Sync:  " + agent_sync_phase + "\n"
+            pub += "Claw:  " + claw_dir_str + "\n"
+            pub += _SEP2 + "\n"
+            pub += "🔗 Full execution details in War Room.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
+        else if pyramid_buy_confirmed or pyramid_sell_confirmed
+            string _pub_pyr_side = pyramid_buy_confirmed ? "LONG" : "SHORT"
+            pub  := _SEP + "\n"
+            pub += "🔺 SCALE-IN LEG " + str.tostring(pyr_locked_num) + " — ADDING TO " + _pub_pyr_side + "\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Winner running. Agent adding position.\n"
+            pub += "Base: +" + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + " unrealised\n"
+            pub += _SEP2 + "\n"
+            pub += "🔗 Full details in War Room.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
         else if alert_liq_buy_sweep
-            pub += "📝 COMMENTARY\n⚠️ Buy-side liquidity swept — monitoring for setup.\n"
+            pub  := _SEP + "\n"
+            pub += "⚠️ BUY-SIDE LIQUIDITY SWEPT\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Pool swept. Monitoring for reversal or continuation.\n"
+            pub += "Claw: " + claw_dir_str + " | Do not react immediately.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
         else if alert_liq_sell_sweep
-            pub += "📝 COMMENTARY\n⚠️ Sell-side liquidity swept — monitoring for setup.\n"
+            pub  := _SEP + "\n"
+            pub += "⚠️ SELL-SIDE LIQUIDITY SWEPT\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Pool swept. Monitoring for reversal or continuation.\n"
+            pub += "Claw: " + claw_dir_str + " | Do not react immediately.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
         else if currentAlerts.swingBullishBOS or currentAlerts.swingBullishCHoCH
-            pub += "📝 COMMENTARY\n📈 Bullish structure shift confirmed.\n"
+            pub  := _SEP + "\n"
+            pub += "📈 BULLISH STRUCTURE SHIFT\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Sellers losing control. Agent scanning long setups.\n"
+            pub += "Score: " + str.tostring(total_score,"#.#") + "/15\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
         else if currentAlerts.swingBearishBOS or currentAlerts.swingBearishCHoCH
-            pub += "📝 COMMENTARY\n📉 Bearish structure shift confirmed.\n"
+            pub  := _SEP + "\n"
+            pub += "📉 BEARISH STRUCTURE SHIFT\n"
+            pub += syminfo.ticker + " | " + current_session + "\n"
+            pub += _SEP + "\n"
+            pub += "Buyers losing control. Agent scanning short setups.\n"
+            pub += "Score: " + str.tostring(total_score,"#.#") + "/15\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
         else if vp_newSession
-            pub += "📝 COMMENTARY\n🕒 " + current_session + " — scanning.\n"
-        pub += _SEP2 + "\n"
-        pub += "🧠 NARRATIVE\n"
-        pub += "Bias  : " + effective_bias    + "\n"
-        pub += "Score : " + str.tostring(total_score,"#.#") + "/15\n"
-        pub += "Sync  : " + agent_sync_phase  + "\n"
-        pub += "Daily : " + pdh_pdl_status    + "\n"
-        if buy_signal_confirmed or sell_signal_confirmed
-            pub += "Dir   : " + (buy_signal_confirmed?"🟢 LONG":"🔴 SHORT") + "\n"
-        pub += _SEP2 + "\n"
-        pub += "🔗 Full Glass Box report in War Room.\n"
+            string _pub_sesh = vp_utcHour >= 13 and vp_utcHour < 22 ? "🗽 NEW YORK" :
+                 vp_utcHour >= 7 and vp_utcHour < 16 ? "👑 LONDON" : "🗼 TOKYO/ASIA"
+            string _pub_spf  = pip_pf == 0.0 ? "—" : str.tostring(math.min(pip_pf,99.9),"#.##")
+            pub  := _SEP + "\n"
+            pub += _pub_sesh + " SESSION OPEN\n"
+            pub += syminfo.ticker + " | " + timeframe.period + " | " + _time_str + "\n"
+            pub += _SEP + "\n"
+            pub += "Bias: " + effective_bias + " | Score: " + str.tostring(total_score,"#.#") + "/15\n"
+            pub += "ATR: " + atrHL + " | Sigs today: " + str.tostring(dpt_total_sigs) + " | PF: " + _pub_spf + "\n"
+            pub += _SEP2 + "\n"
+            pub += "🔗 Full battle plan in War Room.\n"
+            pub += _SEP + "\n"
+            pub += "⚠️ Not financial advice. © 2026 Absolute Dollar"
     else
-        pub += prem
-
-    pub += _SEP2 + "\n⚠️ Not financial advice. © 2026 Absolute Dollar"
+        pub := prem
 
     // ── DISPATCH ──────────────────────────────────────────────────────────
     if tg_1_active
